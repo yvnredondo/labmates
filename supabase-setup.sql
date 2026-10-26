@@ -1,4 +1,4 @@
--- LabMates database setup for Supabase (version 5: hardened, Google or email + password, hidden testers)
+-- LabMates database setup for Supabase (version 7: hardened, Google or email + password, hidden testers, admin editing, people without accounts)
 -- Supabase dashboard → SQL Editor → New query → paste all of this → Run.
 -- Safe to run again, and safe to run over earlier versions: it keeps everyone's data and accounts.
 
@@ -293,6 +293,195 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function public.admin_members() from public, anon;
 grant execute on function public.admin_members() to authenticated;
+
+-- ─────────────────────────────────────────────
+-- 6c. Admin editing: the admin can rename members and fill in their schedules.
+--     (This replaces the roster save rules and profile guard above.)
+-- ─────────────────────────────────────────────
+
+-- 1. Remember who last changed each roster (set by the database, can't be faked)
+alter table public.rosters add column if not exists updated_by uuid;
+
+create or replace function public.touch_roster() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  new.updated_at := now();
+  new.updated_by := auth.uid();
+  return new;
+end;
+$$;
+revoke all on function public.touch_roster() from public, anon, authenticated;
+
+-- 2. Rosters: you can save your own; the admin can also save anyone's
+drop policy if exists "rosters: insert own" on public.rosters;
+create policy "rosters: insert own" on public.rosters
+  for insert to authenticated
+  with check ((user_id = (select auth.uid()) or (select public.is_admin())) and (select public.is_approved()));
+
+drop policy if exists "rosters: update own" on public.rosters;
+create policy "rosters: update own" on public.rosters
+  for update to authenticated
+  using ((user_id = (select auth.uid()) or (select public.is_admin())) and (select public.is_approved()))
+  with check ((user_id = (select auth.uid()) or (select public.is_admin())) and (select public.is_approved()));
+
+-- 3. Profiles: the admin can also rename people
+create or replace function public.guard_profile_update() returns trigger
+language plpgsql security invoker set search_path = '' as $$
+begin
+  if current_user in ('authenticated', 'anon') then
+    new.id         := old.id;
+    new.is_admin   := old.is_admin;
+    new.created_at := old.created_at;
+    if old.id = auth.uid() then
+      new.status := old.status;
+      new.hidden := old.hidden;
+    else
+      if not public.is_admin() then
+        new.display_name := old.display_name;
+      end if;
+      if not public.is_admin() or old.is_admin then
+        new.status := old.status;
+        new.hidden := old.hidden;
+      end if;
+    end if;
+  end if;
+  new.display_name := left(trim(new.display_name), 40);
+  return new;
+end;
+$$;
+revoke all on function public.guard_profile_update() from public, anon, authenticated;
+
+-- ─────────────────────────────────────────────
+-- 6d. People without accounts: the admin adds them and keeps their schedule,
+--     and can link them to an account when they sign up.
+--     (This replaces the visibility check and roster save rules above.)
+-- ─────────────────────────────────────────────
+
+-- 1. People who appear on the roster but don't use the app
+create table if not exists public.offline_members (
+  id           uuid primary key default gen_random_uuid(),
+  display_name text not null check (char_length(display_name) between 1 and 40),
+  hidden       boolean not null default false,
+  created_at   timestamptz not null default now()
+);
+alter table public.offline_members enable row level security;
+
+-- 2. A roster can belong to an account or to a person without one
+alter table public.rosters drop constraint if exists rosters_user_id_fkey;
+
+create or replace function public.roster_owner_exists(target uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.profiles where id = target)
+      or exists (select 1 from public.offline_members where id = target);
+$$;
+revoke all on function public.roster_owner_exists(uuid) from public, anon;
+grant execute on function public.roster_owner_exists(uuid) to authenticated;
+
+-- When an account or a person without one is deleted, their roster goes too
+create or replace function public.drop_roster_of_deleted() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  delete from public.rosters where user_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.drop_roster_of_deleted() from public, anon, authenticated;
+drop trigger if exists profiles_drop_roster on public.profiles;
+create trigger profiles_drop_roster after delete on public.profiles
+  for each row execute function public.drop_roster_of_deleted();
+drop trigger if exists offline_drop_roster on public.offline_members;
+create trigger offline_drop_roster after delete on public.offline_members
+  for each row execute function public.drop_roster_of_deleted();
+
+-- 3. Who can see whom (now including people without accounts)
+create or replace function public.is_visible(target uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select target = auth.uid()
+      or exists (select 1 from public.profiles me where me.id = auth.uid() and me.status = 'approved' and me.is_admin)
+      or (
+        exists (select 1 from public.profiles me where me.id = auth.uid() and me.status = 'approved')
+        and (
+          exists (select 1 from public.profiles t where t.id = target and t.status = 'approved' and not t.hidden)
+          or exists (select 1 from public.offline_members o where o.id = target and not o.hidden)
+        )
+      );
+$$;
+revoke all on function public.is_visible(uuid) from public, anon;
+grant execute on function public.is_visible(uuid) to authenticated;
+
+drop policy if exists "offline: read" on public.offline_members;
+create policy "offline: read" on public.offline_members
+  for select to authenticated
+  using ((select public.is_admin()) or ((select public.is_approved()) and not hidden));
+
+drop policy if exists "offline: admin writes" on public.offline_members;
+create policy "offline: admin writes" on public.offline_members
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+revoke all on public.offline_members from anon, authenticated;
+grant select, insert, delete on public.offline_members to authenticated;
+grant update (display_name, hidden) on public.offline_members to authenticated;
+
+-- Saving rosters: your own, or anyone's if you're the admin, and only for someone who exists
+drop policy if exists "rosters: insert own" on public.rosters;
+create policy "rosters: insert own" on public.rosters
+  for insert to authenticated
+  with check ((user_id = (select auth.uid()) or (select public.is_admin())) and (select public.is_approved()) and public.roster_owner_exists(user_id));
+
+drop policy if exists "rosters: update own" on public.rosters;
+create policy "rosters: update own" on public.rosters
+  for update to authenticated
+  using ((user_id = (select auth.uid()) or (select public.is_admin())) and (select public.is_approved()))
+  with check ((user_id = (select auth.uid()) or (select public.is_admin())) and (select public.is_approved()) and public.roster_owner_exists(user_id));
+
+-- 4. When a person without an account signs up: move their schedule into the account
+--    Their duties and leave are added to the account's roster (days the account
+--    already has stay as they are), then the no-account entry is removed.
+create or replace function public.link_offline_member(offline_id uuid, account_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  src jsonb; dst jsonb; d jsonb; taken text[];
+  new_duties jsonb; new_leaves jsonb;
+begin
+  if not public.is_admin() then raise exception 'Only the admin can do this'; end if;
+  if not exists (select 1 from public.offline_members where id = offline_id) then raise exception 'That person was not found'; end if;
+  if not exists (select 1 from public.profiles where id = account_id) then raise exception 'That account was not found'; end if;
+
+  select data into src from public.rosters where user_id = offline_id;
+  select data into dst from public.rosters where user_id = account_id;
+  src := coalesce(src, '{}'::jsonb);
+  dst := coalesce(dst, '{}'::jsonb);
+
+  select coalesce(array_agg(distinct x->>'date'), '{}') into taken
+  from (select jsonb_array_elements(coalesce(dst->'duties','[]')) x
+        union all select jsonb_array_elements(coalesce(dst->'leaves','[]'))) t;
+
+  select coalesce(dst->'duties','[]'::jsonb) || coalesce(jsonb_agg(x) filter (where not ((x->>'date') = any(taken))), '[]'::jsonb)
+    into new_duties from jsonb_array_elements(coalesce(src->'duties','[]')) x;
+  select coalesce(dst->'leaves','[]'::jsonb) || coalesce(jsonb_agg(x) filter (where not ((x->>'date') = any(taken))), '[]'::jsonb)
+    into new_leaves from jsonb_array_elements(coalesce(src->'leaves','[]')) x;
+
+  d := dst || jsonb_build_object('v', 2, 'duties', new_duties, 'leaves', new_leaves,
+        'updated', (extract(epoch from clock_timestamp()) * 1000)::bigint);
+  insert into public.rosters (user_id, data) values (account_id, d)
+    on conflict (user_id) do update set data = excluded.data;
+
+  delete from public.offline_members where id = offline_id;
+end;
+$$;
+revoke all on function public.link_offline_member(uuid, uuid) from public, anon;
+grant execute on function public.link_offline_member(uuid, uuid) to authenticated;
+
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.offline_members;
+  exception when duplicate_object then null;
+  end;
+end;
+$$;
 
 -- ─────────────────────────────────────────────
 -- 7. Make yourself the admin (one time)
