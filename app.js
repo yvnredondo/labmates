@@ -256,7 +256,7 @@ function adopt(d){
 function loadTeam(){
   if(!sb||!myId)return Promise.resolve();
   return Promise.all([
-    sb.from('profiles').select('id,display_name,status,is_admin,created_at').order('created_at'),
+    sb.from('profiles').select('id,display_name,status,is_admin,hidden,created_at').order('created_at'),
     sb.from('rosters').select('user_id,data')
   ]).then(function(r){
     if(r[0].error||r[1].error)throw r[0].error||r[1].error;
@@ -265,7 +265,7 @@ function loadTeam(){
     if(!mine||mine.status!=='approved'){showGate(mine&&mine.status==='rejected'?'rejected':'pending',mine);return;}
     myProfile=mine;
     var pc={},ok={},t={};
-    members.forEach(function(p){pc[p.id]={name:p.display_name||'',avatarUrl:''};if(p.status==='approved')ok[p.id]=1;});
+    members.forEach(function(p){pc[p.id]={name:p.display_name||'',avatarUrl:''};if(p.status==='approved'&&(!p.hidden||p.id===myId))ok[p.id]=1;});
     profCache=pc;
     (r[1].data||[]).forEach(function(row){
       if(row.user_id===myId){
@@ -613,6 +613,7 @@ function teamHTML(){
       (syncMode==='checking'?'Getting everyone’s duties.':'The Team tab needs a connection. Check your internet, then open this tab again.')+'</p></div>';
     return h;
   }
+  if(myProfile&&myProfile.hidden)h+='<p class="sync" role="note">You’re a tester. You can see the team, but they can’t see you.</p>';
   var ppl=teamPeople(),ids=Object.keys(ppl);
   var groups={},ob=[],lv={BL:[],VL:[],SL:[]},rd=[];
   ids.forEach(function(id){
@@ -1353,6 +1354,7 @@ sheet.addEventListener('click',function(e){
   else if(a==='savename')saveMyName();
   else if(a==='members')openMembers();
   else if(a==='mset')setMemberStatus(b,b.dataset.id,b.dataset.v);
+  else if(a==='mhide')setMemberHidden(b,b.dataset.id,b.dataset.v==='1');
   else if(a==='signout')armed(b,'Tap again to sign out',function(){closeSheet();signOut();});
   else if(a==='cmpp'){var ci=cmpSel.indexOf(b.dataset.v);if(ci>-1)cmpSel.splice(ci,1);else{cmpSel.push(b.dataset.v);cmpQuery='';}drawCompare();}
   else if(a==='cmpf'){cmpFilter=b.dataset.v;drawCompare();}
@@ -1528,11 +1530,11 @@ function memberRow(p){
   var who=p.id===myId?' (you)':'',btns='';
   if(p.id!==myId){
     if(p.status==='pending')btns='<button type="button" class="btn" data-s="mset" data-v="rejected" data-id="'+esc(p.id)+'">Decline</button><button type="button" class="btn primary" data-s="mset" data-v="approved" data-id="'+esc(p.id)+'">Approve</button>';
-    else if(p.status==='approved')btns='<button type="button" class="btn danger" data-s="mset" data-v="rejected" data-id="'+esc(p.id)+'">Remove</button>';
+    else if(p.status==='approved')btns=(p.is_admin?'':'<button type="button" class="btn" data-s="mhide" data-v="'+(p.hidden?'0':'1')+'" data-id="'+esc(p.id)+'">'+(p.hidden?'Unhide':'Hide')+'</button>')+'<button type="button" class="btn danger" data-s="mset" data-v="rejected" data-id="'+esc(p.id)+'">Remove</button>';
     else btns='<button type="button" class="btn" data-s="mset" data-v="approved" data-id="'+esc(p.id)+'">Restore</button>';
   }
   var d=new Date(p.created_at);
-  return '<div class="mrow"><div class="mname"><b>'+esc(p.display_name||'No name')+who+'</b>'+(p.email?'<small class="memail">'+esc(p.email)+'</small>':'')+'<small>'+(p.is_admin?'Admin · ':'')+(p.sign_in?esc(wayLabel(p.sign_in))+' · ':'')+'Joined '+shortDate(d)+' '+d.getFullYear()+'</small></div>'+btns+'</div>';
+  return '<div class="mrow"><div class="mname"><b>'+esc(p.display_name||'No name')+who+'</b>'+(p.email?'<small class="memail">'+esc(p.email)+'</small>':'')+'<small>'+(p.hidden&&p.status==='approved'?'<span class="mhid">Hidden</span> ':'')+(p.is_admin?'Admin · ':'')+(p.sign_in?esc(wayLabel(p.sign_in))+' · ':'')+'Joined '+shortDate(d)+' '+d.getFullYear()+'</small></div>'+btns+'</div>';
 }
 var memberEmails={},memberWays={};
 function openMembers(){
@@ -1555,9 +1557,18 @@ function drawMembers(){
   h+='<h3 class="sec" style="margin:8px 0 4px">Waiting for approval ('+pend.length+')</h3>'+(pend.length?pend.map(memberRow).join(''):'<p class="hint">No one is waiting.</p>');
   h+='<h3 class="sec" style="margin:20px 0 4px">Members ('+appr.length+')</h3>'+appr.map(memberRow).join('');
   if(rej.length)h+='<h3 class="sec" style="margin:20px 0 4px">Removed or declined ('+rej.length+')</h3>'+rej.map(memberRow).join('');
-  h+='<p class="hint" style="margin-top:16px">Check the name, email and sign-in method before you approve someone. A password account can use any email, so only approve people you know. Approved members can see everyone’s duties, leave and notes. Removing someone hides the team from them right away; their account stays so you can restore it.</p>';
+  h+='<p class="hint" style="margin-top:16px">Check the name, email and sign-in method before you approve someone. A password account can use any email, so only approve people you know. Approved members can see everyone’s duties, leave and notes. Hide is for testers: a hidden member still sees the team, but nobody else sees them in the Team tab. Removing someone hides the team from them right away; their account stays so you can restore it.</p>';
   h+='<div class="menu" style="margin-top:16px"><button type="button" class="btn" data-s="close">Close</button></div>';
   openSheet(h);
+}
+function setMemberHidden(btn,id,hide){
+  btn.disabled=true;
+  sb.from('profiles').update({hidden:hide}).eq('id',id).then(function(r){
+    if(r.error){toast("Couldn't update. Check your connection.");btn.disabled=false;return;}
+    members.forEach(function(p){if(p.id===id)p.hidden=hide;});
+    toast(hide?'Hidden from the team':'Visible to the team');
+    drawMembers();queueTeam();
+  });
 }
 function setMemberStatus(btn,id,status){
   var go=function(){
@@ -1828,7 +1839,7 @@ function afterAuth(force){
   if(authBusy&&!force)return;
   if(myId===session.user.id&&!force&&!appEl.hidden)return;
   authBusy=true;
-  sb.from('profiles').select('id,display_name,status,is_admin,created_at').eq('id',session.user.id).maybeSingle().then(function(r){
+  sb.from('profiles').select('id,display_name,status,is_admin,hidden,created_at').eq('id',session.user.id).maybeSingle().then(function(r){
     authBusy=false;
     if(r.error){gateNote=authMsg(r.error);showGate('error');return;}
     var p=r.data;
