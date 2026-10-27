@@ -2,7 +2,7 @@
 // Network first, so a new version on GitHub shows up as soon as you're online.
 // Only the app's own files and its fonts are cached. Sign-in and roster data
 // always go straight to Supabase and are never stored here.
-const CACHE = 'labmates-v3';
+const CACHE = 'labmates-v4';
 const SHELL = [
   './', './index.html', './app.js', './config.js', './manifest.webmanifest',
   './vendor/supabase-2.117.3.js', './vendor/jspdf-4.2.1.umd.min.js', './icons/icon-192.png'

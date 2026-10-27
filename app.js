@@ -1952,6 +1952,7 @@ function field(id,label,type,ac,extra){
 }
 function showGate(mode,profile){
   gateMode=mode;
+  var bt=document.getElementById('boot');if(bt)bt.remove();
   appEl.hidden=true;gate.hidden=false;
   if(scrim.classList.contains('open'))closeSheet();
   var h='<div class="gcard"><div class="gbrand">'+brandMark(76)+'<b>Lab<span>Mates</span></b><small>Shared duty roster for the lab</small></div><div class="gpanel">';
@@ -2040,6 +2041,10 @@ gate.addEventListener('keydown',function(e){
   if(e.key!=='Enter'||e.target.tagName!=='INPUT')return;
   var b=gate.querySelector('.btn.primary');if(b){e.preventDefault();b.click();}
 });
+/* Remove any saved sign-in tokens so the next visit starts clean. */
+function wipeAuth(){
+  try{Object.keys(localStorage).forEach(function(k){if(/^sb-.*-auth-token/.test(k))localStorage.removeItem(k);});}catch(e){}
+}
 function signOut(){
   if(actingFor){actingFor=null;own=null;document.getElementById('actbar').hidden=true;document.body.classList.remove('acting');}
   var oldKey=KEY;
@@ -2051,7 +2056,11 @@ function signOut(){
     state.duties=[];state.leaves=[];state.settings={h24:true,cutoff:'payday'};
     gateNote='';showGate('signin');
   };
-  var out=function(){if(sb)sb.auth.signOut().then(go,go);else go();};
+  var out=function(){
+    var done=false,fin=function(){if(done)return;done=true;wipeAuth();go();};
+    setTimeout(fin,2500);
+    if(sb){try{sb.auth.signOut({scope:'local'}).then(fin,fin);}catch(e){fin();}}else fin();
+  };
   if(pending&&myId&&sb){
     clearTimeout(saveT);
     var p=payload();
@@ -2112,6 +2121,23 @@ function boot(){
 }
 if('serviceWorker' in navigator&&location.protocol==='https:'){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}
 
-view='today';boot();
+/* Safety net: if the page ever has nothing on screen, show a way out instead of a blank page. */
+function rescue(){
+  if(authBusy)return;
+  if(gate.hidden===false&&gate.innerHTML&&gateMode!=='loading')return;
+  if(appEl.hidden===false)return;
+  if(gateMode==='loading'||gate.hidden||!gate.innerHTML){
+    var gt=setTimeout(function(){if(gateMode==='loading'||gate.hidden)showGate('signin');},2500);
+    if(sb){try{sb.auth.getSession().then(function(r){clearTimeout(gt);
+      session=r&&r.data?r.data.session:null;
+      if(!session){showGate(seenWelcome()?'signin':'welcome');}else afterAuth(true);
+    },function(){showGate('signin');});}catch(e){showGate('signin');}}
+    else showGate('signin');
+  }
+}
+view='today';
+try{boot();}catch(e){try{showGate('signin');}catch(e2){}}
+setTimeout(rescue,4000);
+setTimeout(rescue,9000);
 
 })();

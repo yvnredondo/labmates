@@ -398,6 +398,10 @@ textarea{min-height:150px;resize:vertical;font-family:ui-monospace,Menlo,Consola
 select{width:100%;padding:12px;font-size:16px;border:1px solid var(--line);border-radius:10px;background:var(--bg);min-height:46px;}
 .gate{min-height:100vh;min-height:100dvh;display:flex;align-items:flex-start;justify-content:center;padding:max(32px,env(safe-area-inset-top,0px)) 16px 40px;background:var(--bg);}
 .gate[hidden]{display:none;}
+.boot{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--ink,#444);font-weight:600;text-align:center;padding:24px;}
+.bootlate{opacity:0;animation:bootin .4s 5s forwards;font-weight:500;}
+.bootlate a{color:inherit;text-decoration:underline;}
+@keyframes bootin{to{opacity:1;}}
 .visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
 .gcard{width:100%;max-width:420px;}
 .gbrand{display:flex;flex-direction:column;align-items:center;gap:8px;margin:12px 0 24px;text-align:center;}
@@ -429,6 +433,11 @@ select{width:100%;padding:12px;font-size:16px;border:1px solid var(--line);borde
 .mrow .mname small.memail{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .mrow .btn{min-height:40px;padding:8px 12px;font-size:.9rem;}
 .mrow{flex-wrap:wrap;}
+.actbar{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--live-bg);color:var(--live);font-weight:700;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));box-shadow:0 2px 8px rgba(0,0,0,.12);}
+.actbar[hidden]{display:none;}
+.actbar span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.actbar button{flex:none;border:0;border-radius:999px;background:var(--live);color:var(--live-bg);font-weight:700;padding:8px 16px;min-height:40px;}
+body.acting main{padding-top:64px;}
 .mrow .mname{flex-basis:160px;}
 .mhid{display:inline-block;padding:0 6px;border-radius:6px;background:var(--live-bg);color:var(--live);font-weight:700;}
 .mbadge{display:inline-block;min-width:20px;padding:1px 6px;margin-left:6px;border-radius:999px;background:var(--danger);color:#fff;font-size:.78rem;font-weight:700;text-align:center;}
@@ -540,7 +549,9 @@ select{width:100%;padding:12px;font-size:16px;border:1px solid var(--line);borde
 </head>
 <body>
 <div class="gate" id="gate" hidden></div>
+<div class="boot" id="boot"><p>Loading LabMates…</p><p class="bootlate">Taking long? <a href="./?fresh=1">Tap here to reload</a></p></div>
 <div id="app" hidden>
+<div class="actbar" id="actbar" role="status" hidden><span>Editing <b id="actname"></b>’s schedule</span><button type="button" id="actdone">Done</button></div>
 <main id="main" aria-live="polite"></main>
 
 <button class="fab" id="fab" type="button" aria-label="Add a duty or leave">
