@@ -2087,6 +2087,7 @@ function afterAuth(force){
       load();
       try{var o=JSON.parse(localStorage.getItem(KEY)||'null');myUpdated=(o&&o.updated)||0;}catch(e){}
     }
+    var bt=document.getElementById('boot');if(bt)bt.remove();
     gate.hidden=true;appEl.hidden=false;
     animNext=true;render();
     startSync();
