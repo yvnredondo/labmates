@@ -581,7 +581,7 @@ body.acting main{padding-top:64px;}
   .tour-ring{animation:lm-pulse 1.6s ease-in-out infinite;}
   @keyframes lm-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.5)}50%{box-shadow:0 0 0 8px rgba(255,255,255,0)}}
 }
-@media (prefers-reduced-motion:no-preference){.scrim.open .sheet{animation:up .38s cubic-bezier(.25,.8,.3,1);}@keyframes up{0%{transform:translateY(60px);opacity:.4}60%{transform:translateY(-6px);opacity:1}100%{transform:none;opacity:1}}}
+@media (prefers-reduced-motion:no-preference){.scrim.open .sheet{animation:up .38s cubic-bezier(.25,.8,.3,1);}@keyframes up{0%{transform:translateY(60px)}60%{transform:translateY(-6px)}100%{transform:none}}}
 
 /* ---- visual refresh: More tiles, chips, shimmer ---- */
 .mprof{display:flex;align-items:center;gap:12px;background:var(--bg);border-radius:20px;padding:10px 12px;margin:0 0 14px;}
@@ -601,7 +601,8 @@ body.acting main{padding-top:64px;}
 .mt-me{--tc:#0e6b5c;--tt:#fff}.mt-ro{--tc:#9a6200;--tt:#fff}.mt-st{--tc:#2a5fa8;--tt:#fff}.mt-ad{--tc:#7a3f95;--tt:#fff}
 .mrow{display:flex;align-items:center;justify-content:flex-start;gap:12px;width:100%;margin-top:12px;padding:10px 14px;text-align:left;}
 .mp-ini{display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);font-weight:800;font-size:1.1rem;width:46px;height:46px;}
-.mrow .mi{width:38px;height:38px;border-radius:12px;background:var(--soft);display:grid;place-items:center;flex:none;}
+.mrow{background:var(--soft);}
+.mrow .mi{width:38px;height:38px;border-radius:12px;background:var(--surface);display:grid;place-items:center;flex:none;}
 .mrow .mi svg{width:20px;height:20px;}
 .mrow .ml{flex:1;text-align:left;line-height:1.2;}
 .mrow .ml small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);margin-top:2px;}
