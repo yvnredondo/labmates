@@ -1017,6 +1017,24 @@ function clampCards(){
     sec.appendChild(b);
   });
 }
+function movePill(){
+  var p=document.getElementById('tabpill'),t=document.querySelector('.tab[aria-current="page"]');
+  if(!p)return;
+  if(!t){p.style.width='0';return;}
+  p.style.width=t.offsetWidth+'px';p.style.transform='translateX('+t.offsetLeft+'px)';
+  if(!p.classList.contains('ready'))requestAnimationFrame(function(){requestAnimationFrame(function(){p.classList.add('ready');});});
+}
+window.addEventListener('resize',movePill);
+function countUps(root){
+  if(!window.matchMedia||matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  root.querySelectorAll('.cs b,.pb-n b').forEach(function(el){
+    var end=parseInt(el.textContent,10);
+    if(!isFinite(end)||end<=0||String(end)!==el.textContent.trim())return;
+    var t0=null;
+    function step(ts){if(t0===null)t0=ts;var k=Math.min(1,(ts-t0)/600);el.textContent=Math.round(end*(1-Math.pow(1-k,3)));if(k<1)requestAnimationFrame(step);else el.textContent=end;}
+    el.textContent='0';requestAnimationFrame(step);
+  });
+}
 function render(){
   var m=document.getElementById('main');
   m.classList.remove('enter');
@@ -1025,6 +1043,7 @@ function render(){
   document.querySelectorAll('.tab').forEach(function(t){
     if(t.dataset.view===view)t.setAttribute('aria-current','page');else t.removeAttribute('aria-current');
   });
+  movePill();if(m.classList.contains('enter'))countUps(m);
   if(view==='cal'&&calMode==='list')applyListSearch();
   if(view==='team'&&syncMode==='online')refreshNames();
   if(view==='team')clampCards();
@@ -1396,28 +1415,51 @@ function openMore(){
       '<button type="button" class="btn" data-s="close">Close</button></div>');
     return;
   }
-  openSheet('<h2>More</h2>'+
-    '<p class="hint" style="margin:-6px 0 4px">'+esc(syncText())+'</p>'+
-    '<label>Time format</label>'+
-    '<div class="seg"><button type="button" data-s="fmt" data-v="24" aria-pressed="'+(state.settings.h24)+'">24-hour</button>'+
-    '<button type="button" data-s="fmt" data-v="12" aria-pressed="'+(!state.settings.h24)+'">12-hour</button></div>'+
-    '<div class="menu" style="margin-top:20px">'+
-    '<button type="button" class="btn" data-s="myname">Your name</button>'+
-    '<button type="button" class="btn" data-s="pw">Set or change password</button>'+
-    '<button type="button" class="btn" data-s="avatar">Your avatar</button>'+
-    claimMenuBtn()+
-    (myProfile&&myProfile.is_admin?'<button type="button" class="btn" data-s="members">Members'+(pendingCount()?'<span class="mbadge">'+pendingCount()+'</span>':'')+'</button>':'')+
-    '<button type="button" class="btn" data-s="stats">Your stats</button>'+
-    '<button type="button" class="btn" data-s="tour">Show the tour again</button>'+
-    '<button type="button" class="btn" data-s="about">What is LabMates?</button>'+
-    '<button type="button" class="btn" data-s="export">Export month (PNG or PDF)</button>'+
-    '<button type="button" class="btn" data-s="import">Paste roster</button>'+
-    '<button type="button" class="btn" data-s="backup">Backup and restore</button>'+
-    '<button type="button" class="btn danger" data-s="clear">Clear all my duties</button>'+
-    '<button type="button" class="btn" data-s="signout">Sign out</button>'+
-    '<button type="button" class="btn" data-s="close">Close</button></div>'+
+  var isAdm=!!(myProfile&&myProfile.is_admin);
+  var nm=(myProfile&&myProfile.display_name)||'You';
+  var myAv=validAvatar(state.settings.avatar)?avatarSVG(state.settings.avatar,'av'):'<span class="av mp-ini" aria-hidden="true">'+esc((nm||'?').charAt(0).toUpperCase())+'</span>';
+  var ic={
+    me:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-4 3.5-6 7-6s6.2 2 7 6"/></svg>',
+    ro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M10 12h6M10 16h6"/></svg>',
+    st:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>',
+    ad:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/></svg>',
+    he:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1.1 1-1.1 1.8M12 17h.01"/></svg>'
+  };
+  openSheet('<div class="mprof">'+myAv+'<div class="mp-t"><b>'+esc(nm)+'</b><small>'+(isAdm?'Admin':'Member')+'</small></div>'+
+    '<div class="seg" role="group" aria-label="Time format"><button type="button" data-s="fmt" data-v="24" aria-pressed="'+(state.settings.h24)+'">24h</button>'+
+    '<button type="button" data-s="fmt" data-v="12" aria-pressed="'+(!state.settings.h24)+'">12h</button></div></div>'+
+    '<div class="mtiles">'+
+    '<button type="button" class="mtile mt-me" data-s="mgo" data-v="me">'+ic.me+'<span><b>Me</b><small>Name, password, avatar</small></span></button>'+
+    '<button type="button" class="mtile mt-ro" data-s="mgo" data-v="ro">'+ic.ro+'<span><b>Roster tools</b><small>Paste, export, backup</small></span></button>'+
+    '<button type="button" class="mtile mt-st" data-s="stats">'+ic.st+'<span><b>My stats</b><small>Hours, streaks, posts</small></span></button>'+
+    (isAdm?'<button type="button" class="mtile mt-ad" data-s="members">'+ic.ad+(pendingCount()?'<span class="mbadge">'+pendingCount()+'</span>':'')+'<span><b>Admin</b><small>Members and import</small></span></button>':'')+
+    '</div>'+
+    '<button type="button" class="btn mrow" data-s="mgo" data-v="he">'+ic.he+'Help and account</button>'+
+    '<button type="button" class="btn block" data-s="close" style="margin-top:10px">Close</button>'+
     '<div class="morebrand">'+brandMark(28)+'<div class="bb-text"><b>Lab<span>Mates</span></b><small>'+BRAND_BY+'</small></div></div>'+
     (AV_CREDIT?'<p class="hint" style="margin-top:16px;text-align:center">'+AV_CREDIT+'</p>':''));
+}
+function openMoreSub(k){
+  var back='<button type="button" class="mback" data-s="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>More</button>';
+  var h='';
+  if(k==='me'){
+    h='<h2>Me</h2><div class="menu">'+
+      '<button type="button" class="btn" data-s="myname">Your name</button>'+
+      '<button type="button" class="btn" data-s="pw">Set or change password</button>'+
+      '<button type="button" class="btn" data-s="avatar">Your avatar</button>'+claimMenuBtn()+'</div>';
+  }else if(k==='ro'){
+    h='<h2>Roster tools</h2><div class="menu">'+
+      '<button type="button" class="btn" data-s="import">Paste roster</button>'+
+      '<button type="button" class="btn" data-s="export">Export month (PNG or PDF)</button>'+
+      '<button type="button" class="btn" data-s="backup">Backup and restore</button>'+
+      '<button type="button" class="btn danger" data-s="clear">Clear all my duties</button></div>';
+  }else{
+    h='<h2>Help and account</h2><div class="menu">'+
+      '<button type="button" class="btn" data-s="tour">Show the tour again</button>'+
+      '<button type="button" class="btn" data-s="about">What is LabMates?</button>'+
+      '<button type="button" class="btn" data-s="signout">Sign out</button></div>';
+  }
+  openSheet(back+h);
 }
 
 /* Sheet events */
@@ -1429,6 +1471,8 @@ sheet.addEventListener('click',function(e){
   else if(a==='del')armed(b,'Tap again to delete',function(){
     state.duties=state.duties.filter(function(x){return x.id!==b.dataset.id;});
     if(save())toast('Deleted');closeSheet();render();});
+  else if(a==='mgo')openMoreSub(b.dataset.v);
+  else if(a==='more')openMore();
   else if(a==='avatar')openAvatarPicker();
   else if(a==='myname')openMyName();
   else if(a==='pw')openPassword();
