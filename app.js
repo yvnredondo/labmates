@@ -73,25 +73,6 @@ function brandMark(px){
     '<g transform="rotate(10 36 64)"><path d="M24 32V84a12 12 0 0 0 24 0V32z" fill="var(--surface)" stroke="var(--ink)" stroke-width="6" stroke-linejoin="round"/><path d="M29 58Q36 63 43 58V84a7 7 0 0 1 -14 0z" fill="#f6b24a"/><rect x="20" y="25" width="32" height="10" rx="5" fill="var(--ink)"/></g>'+
     '<g transform="rotate(-10 84 64)"><path d="M72 32V84a12 12 0 0 0 24 0V32z" fill="var(--surface)" stroke="var(--ink)" stroke-width="6" stroke-linejoin="round"/><path d="M77 50Q84 55 91 50V84a7 7 0 0 1 -14 0z" fill="var(--accent)"/><rect x="68" y="25" width="32" height="10" rx="5" fill="var(--ink)"/></g></svg>';
 }
-function showSplash(force){
-  var day=ymd(new Date()),seen='';
-  try{seen=localStorage.getItem('labmates:splash')||'';}catch(e){}
-  if(!force&&seen===day)return;
-  try{localStorage.setItem('labmates:splash',day);}catch(e){}
-  if(window.matchMedia&&matchMedia('(prefers-reduced-motion:reduce)').matches)return;
-  var old=document.getElementById('splash');if(old)old.remove();
-  function word(t,cls,d0){return '<span class="sp-w '+cls+'">'+t.split('').map(function(ch,i){return '<span class="sp-l" style="animation-delay:'+(d0+i*0.07).toFixed(2)+'s">'+ch+'</span>';}).join('')+'</span>';}
-  var el=document.createElement('div');el.id='splash';el.setAttribute('aria-hidden','true');
-  el.innerHTML='<div class="sp-glow"></div><div class="sp-ring"></div><div class="sp-ring r2"></div>'+
-    '<div class="sp-mark">'+brandMark(120)+'</div>'+
-    '<div class="sp-title">'+word('Lab','',0.75)+word('Mates','acc',0.97)+'</div>'+
-    '<div class="sp-bar"></div><div class="sp-by">'+esc(BRAND_BY)+'</div>';
-  document.body.appendChild(el);
-  var done=false;
-  function end(){if(done)return;done=true;el.classList.add('out');setTimeout(function(){if(el.parentNode)el.remove();},700);}
-  el.addEventListener('click',end);
-  setTimeout(end,3300);
-}
 function brandBar(){
   return '<div class="brandbar">'+brandMark(34)+'<div class="bb-text"><b>Lab<span>Mates</span></b><small>'+BRAND_BY+'</small></div></div>';
 }
@@ -1494,7 +1475,6 @@ function openMoreSub(k){
     h='<h2>Help and account</h2><div class="menu">'+
       '<button type="button" class="btn" data-s="tour">Show the tour again</button>'+
       '<button type="button" class="btn" data-s="about">What is LabMates?</button>'+
-      '<button type="button" class="btn" data-s="splash">Replay the intro</button>'+
       '<button type="button" class="btn" data-s="signout">Sign out</button></div>';
   }
   openSheet(back+h);
@@ -1510,7 +1490,6 @@ sheet.addEventListener('click',function(e){
     state.duties=state.duties.filter(function(x){return x.id!==b.dataset.id;});
     if(save())toast('Deleted');closeSheet();render();});
   else if(a==='mgo')openMoreSub(b.dataset.v);
-  else if(a==='splash'){closeSheet();setTimeout(function(){showSplash(true);},250);}
   else if(a==='more')openMore();
   else if(a==='avatar')openAvatarPicker();
   else if(a==='myname')openMyName();
@@ -2538,7 +2517,6 @@ function rescue(){
   }
 }
 view='today';
-try{showSplash();}catch(e){}
 try{boot();}catch(e){try{showGate('signin');}catch(e2){}}
 setTimeout(rescue,4000);
 setTimeout(rescue,9000);
