@@ -576,6 +576,12 @@ function todayHTML(){
 /* ---------- rendering: Calendar ---------- */
 var ARROW_L='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>';
 var ARROW_R='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
+function exportTip(){
+  try{if(localStorage.getItem('labmates:exptip'))return '';}catch(e){}
+  return '<div class="exptip"><div class="et-t"><b>Send your schedule to anyone</b><span>Save this month as a picture or PDF. Good for people who are not in the app.</span>'+
+    '<button type="button" class="btn primary" data-a="exptip">Save as image</button></div>'+
+    '<button type="button" class="et-x" data-a="exptipx" aria-label="Hide this tip">×</button></div>';
+}
 function calHTML(){
   var today=ymd(new Date());
   var by={};state.duties.forEach(function(d){(by[d.date]=by[d.date]||[]).push(d);});
@@ -583,6 +589,7 @@ function calHTML(){
   var h='<div class="calhead"><button class="iconbtn" type="button" data-a="prev" aria-label="Previous month">'+ARROW_L+'</button>'+
     '<h1>'+MONTHS[calM]+' '+calY+'</h1>'+
     '<button class="iconbtn" type="button" data-a="next" aria-label="Next month">'+ARROW_R+'</button></div>';
+  h+=exportTip();
   h+='<div class="seg" style="margin-bottom:12px"><button type="button" data-a="mode" data-v="grid" aria-pressed="'+(calMode==='grid')+'">Grid</button>'+
      '<button type="button" data-a="mode" data-v="list" aria-pressed="'+(calMode==='list')+'">List</button></div>';
   if(calMode==='list')return h+listHTML();
@@ -893,6 +900,10 @@ function boardHTML(keys,groups,obl,lv,rdl){
 function refreshNames(){}
 
 /* ---------- export ---------- */
+function exportName(){
+  var n=actingFor?personName(actingFor):(myProfile&&myProfile.display_name)||'';
+  return String(n||'').replace(/\s+/g,' ').trim();
+}
 function buildExportCanvas(y,m){
   var pre=y+'-'+pad(m+1)+'-';
   var list=state.duties.filter(function(d){return d.date.indexOf(pre)===0;}).sort(cmp);
@@ -905,8 +916,14 @@ function buildExportCanvas(y,m){
   var ctx=cvs.getContext('2d');
   var F=' system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
   ctx.fillStyle='#ffffff';ctx.fillRect(0,0,W,H);
-  ctx.fillStyle='#10201c';ctx.font='700 30px'+F;
-  ctx.fillText('LabMates — '+MONTHS[m]+' '+y,36,54);
+  var who=exportName();
+  ctx.fillStyle='#10201c';
+  var ttl=who?who+' — '+MONTHS[m]+' '+y:'LabMates — '+MONTHS[m]+' '+y,fs=30;
+  ctx.font='700 '+fs+'px'+F;
+  while(fs>18&&ctx.measureText(ttl).width>W-72-(who?110:0)){fs-=2;ctx.font='700 '+fs+'px'+F;}
+  ctx.fillText(ttl,36,54);
+  if(who){ctx.fillStyle='#0e6b5c';ctx.font='700 18px'+F;ctx.textAlign='right';ctx.fillText('LabMates',W-36,52);ctx.textAlign='left';}
+  ctx.fillStyle='#10201c';
   ctx.fillStyle='#566a64';ctx.font='400 15px'+F;
   var hrs=list.reduce(function(a,d){return a+hours(d);},0);
   ctx.fillText(list.length+' duties · '+(Math.round(hrs*10)/10)+' hours · '+(days-Object.keys(by).length)+' days off',36,80);
@@ -955,7 +972,8 @@ function saveFile(name,blob){
 }
 function exportMonth(kind){
   var cvs=buildExportCanvas(calY,calM);
-  var stamp=MONTHS[calM].toLowerCase()+'-'+calY;
+  var stamp=MONTHS[calM].toLowerCase()+'-'+calY,nm=exportName().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  if(nm)stamp=nm+'-'+stamp;
   if(kind==='png'){
     cvs.toBlob(function(blob){
       if(!blob){toast("Couldn't build the image.");return;}
@@ -1348,7 +1366,7 @@ function openStats(period){
 function openExport(){
   var label=MONTHS[calM]+' '+calY;
   openSheet('<h2>Export '+esc(label)+'</h2>'+
-    '<p class="hint" style="margin-top:0">Exports the month currently open on the Calendar tab. Switch tabs and months first if you want a different one.</p>'+
+    '<p class="hint" style="margin-top:0">Saves the month open on the Calendar tab as a picture or PDF, with your name on top. You can send it to anyone, even if they do not use LabMates.</p>'+
     '<div class="menu"><button type="button" class="btn primary" data-s="doexport" data-v="png">Save as PNG</button>'+
     '<button type="button" class="btn primary" data-s="doexport" data-v="pdf">Save as PDF</button>'+
     '<button type="button" class="btn" data-s="close">Cancel</button></div>');
@@ -1434,7 +1452,7 @@ function openMore(){
     '<button type="button" class="mtile mt-st" data-s="stats">'+ic.st+'<span><b>My stats</b><small>Hours, streaks, posts</small></span></button>'+
     (isAdm?'<button type="button" class="mtile mt-ad" data-s="members">'+ic.ad+(pendingCount()?'<span class="mbadge">'+pendingCount()+'</span>':'')+'<span><b>Admin</b><small>Members and import</small></span></button>':'')+
     '</div>'+
-    '<button type="button" class="btn mrow" data-s="mgo" data-v="he">'+ic.he+'Help and account</button>'+
+    '<button type="button" class="btn mrow" data-s="mgo" data-v="he"><span class="mi">'+ic.he+'</span><span class="ml">Help and account<small>Tour, about, sign out</small></span><svg class="mchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>'+
     '<button type="button" class="btn block" data-s="close" style="margin-top:10px">Close</button>'+
     '<div class="morebrand">'+brandMark(28)+'<div class="bb-text"><b>Lab<span>Mates</span></b><small>'+BRAND_BY+'</small></div></div>'+
     (AV_CREDIT?'<p class="hint" style="margin-top:16px;text-align:center">'+AV_CREDIT+'</p>':''));
@@ -1572,6 +1590,8 @@ document.getElementById('main').addEventListener('click',function(e){
   else if(a==='next'){calM++;if(calM>11){calM=0;calY++;}render();}
   else if(a==='sel'){selDate=t.dataset.date;render();}
   else if(a==='mode'){calMode=t.dataset.v;render();}
+  else if(a==='exptip'){openExport();}
+  else if(a==='exptipx'){try{localStorage.setItem('labmates:exptip','1');}catch(e){}render();}
   else if(a==='tprev'){teamSel=null;teamDate=ymd(addDays(parseYmd(teamDate),-1));render();}
   else if(a==='tnext'){teamSel=null;teamDate=ymd(addDays(parseYmd(teamDate),1));render();}
   else if(a==='avatar'){openAvatarPicker();}
