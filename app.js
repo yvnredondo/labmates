@@ -1918,6 +1918,7 @@ function doLink(btn,id,to){
   });
 }
 function normName(n){return String(n||'').toLowerCase().replace(/[^a-z0-9ñ ]+/g,' ').replace(/\s+/g,' ').trim();}
+var timpPick={};
 function nameTokens(n){return normName(String(n||'').replace(HONOR,' ')).split(' ').filter(function(t){return t.length>1;});}
 function parseTeamRoster(text){
   var secs=[],cur=null;
@@ -1932,8 +1933,10 @@ function parseTeamRoster(text){
     var hit=people.filter(function(p){return normName(p.display_name)===nn||(schedNames[p.id]&&normName(schedNames[p.id])===nn);});
     sc.match=hit.length===1?hit[0]:null;
     sc.ambiguous=hit.length>1;
-    sc.suggest=null;
-    if(!hit.length){
+    sc.suggest=null;sc.picked=false;
+    var pk=timpPick[nn]&&people.filter(function(p){return p.id===timpPick[nn];})[0];
+    if(pk){sc.match=pk;sc.ambiguous=false;sc.picked=true;}
+    else if(!hit.length){
       var st=nameTokens(sc.name);
       var cand=members.filter(function(p){
         if(p.status!=='approved')return false;
@@ -1946,7 +1949,14 @@ function parseTeamRoster(text){
   });
   return secs;
 }
+function memberOptions(sel){
+  var list=members.filter(function(p){return p.status==='approved';}).map(function(p){return {id:p.id,t:(p.display_name||'No name')+(memberEmails[p.id]?' · '+memberEmails[p.id]:'')};})
+    .concat(offline.map(function(o){return {id:o.id,t:(o.display_name||'No name')+' · no account'};}));
+  list.sort(function(a,b){return a.t.localeCompare(b.t);});
+  return list.map(function(x){return '<option value="'+esc(x.id)+'"'+(x.id===sel?' selected':'')+'>'+esc(x.t)+'</option>';}).join('');
+}
 function openTeamImport(){
+  timpPick={};
   openSheet('<h2>Import team roster</h2>'+
     '<p class="hint" style="margin-top:0">Paste everyone’s schedule at once. Start each person with a line like <b>## Maria Santos</b>, then their days underneath, the same way as Paste roster (e.g. <b>Oct 1 6A CC</b>, <b>Oct 4 RD</b>, <b>Oct 5 VL</b>). A name matches a person’s name on the site or their <b>Schedule name</b> (set in their Options). Names that don’t match anyone become people without an account.</p>'+
     '<textarea id="timp" spellcheck="false" placeholder="## Maria Santos&#10;Nov 1 6A CC&#10;Nov 2 RD&#10;## Lito Cruz&#10;Nov 1 2P ER"></textarea>'+
@@ -1956,11 +1966,22 @@ function openTeamImport(){
     '<button type="button" class="btn primary" data-s="doteamimp" id="timp-go" disabled>Add to roster</button></div>');
   var timpGo=function(){document.getElementById('timp').dispatchEvent(new Event('input'));};
   document.getElementById('timp-rep').addEventListener('change',timpGo);
+  document.getElementById('timp-prev').addEventListener('change',function(e){
+    var t=e.target;if(!t||!t.classList||!t.classList.contains('timp-pick'))return;
+    if(t.value)timpPick[t.dataset.k]=t.value;else delete timpPick[t.dataset.k];
+    timpGo();
+  });
   document.getElementById('timp').addEventListener('input',function(){
     var secs=parseTeamRoster(this.value),p=document.getElementById('timp-prev'),go=document.getElementById('timp-go');
     if(!secs.length){p.textContent='Start each person with ## and their name.';go.disabled=true;return;}
     var bad=0;
     p.innerHTML=secs.map(function(sc){
+      var pickSel='';
+      if(sc.picked||!(sc.match||sc.suggest)){
+        var nk=normName(sc.name);
+        pickSel='<br><select class="timp-pick" data-k="'+esc(nk)+'" aria-label="Who is '+esc(sc.name)+'?"><option value="">New person without an account</option>'+
+          memberOptions(sc.picked?sc.match.id:'')+'</select>';
+      }
       var who=sc.suggest?'member · looks like <b>'+esc(sc.suggest.display_name)+'</b>, saved as their schedule name':sc.ambiguous?'<span class="gerr">More than one person has this name. Rename one first.</span>':
         sc.match?(sc.match.id===myId?'you':(isOffline(sc.match.id)?'no account':'member'))+(normName(sc.match.display_name)!==normName(sc.name)?' · '+esc(sc.match.display_name):''):'new person without an account';
       if(sc.r.bad.length)bad+=sc.r.bad.length;
@@ -1971,7 +1992,7 @@ function openTeamImport(){
         (ex.duties||[]).forEach(function(x){if(x&&dts[x.date])n++;});(ex.leaves||[]).forEach(function(x){if(x&&dts[x.date])n++;});
         if(n)rp=' · replaces '+n+' existing';
       }
-      return '<div><b>'+esc(sc.name)+'</b> → '+who+' · '+sc.r.ok.length+' dut'+(sc.r.ok.length===1?'y':'ies')+(sc.r.leaves.length?', '+sc.r.leaves.length+' leave':'')+rp+'</div>';
+      return '<div style="margin-bottom:8px"><b>'+esc(sc.name)+'</b> → '+who+' · '+sc.r.ok.length+' dut'+(sc.r.ok.length===1?'y':'ies')+(sc.r.leaves.length?', '+sc.r.leaves.length+' leave':'')+rp+pickSel+'</div>';
     }).join('')+(bad?'<div class="gerr">'+bad+' line'+(bad===1?'':'s')+' couldn’t be read and will be skipped.</div>':'');
     go.disabled=secs.some(function(sc){return sc.ambiguous;})||!secs.some(function(sc){return sc.r.ok.length||sc.r.leaves.length;});
   });
@@ -2008,8 +2029,8 @@ function doTeamImport(btn){
         next();
       },function(){failed.push(sc.name);next();});
     };
-    if(sc.suggest){
-      var sid=sc.suggest.id;
+    if(sc.suggest||sc.picked){
+      var sid=(sc.suggest||sc.match).id;
       sb.from('schedule_names').upsert({person_id:sid,name:sc.name.slice(0,80)}).then(function(r){if(!r.error)schedNames[sid]=sc.name.slice(0,80);},function(){});
       withId(sid);return;
     }
