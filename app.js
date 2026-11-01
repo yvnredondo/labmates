@@ -219,7 +219,7 @@ function load(){
 var sb=null,session=null,myProfile=null,syncMode='checking',writing=false,pending=false,readOnly=false,saveT=null,myUpdated=0;
 var myId=null,team={},profCache={},members=[],channel=null,teamT=null;
 /* When the admin edits someone else's schedule, actingFor holds their id and own holds the admin's own roster. */
-var actingFor=null,own=null,allRosters={},offline=[];
+var actingFor=null,own=null,allRosters={},offline=[],claims=[],claimAsked=false;
 function payload(){return {v:2,duties:state.duties,leaves:state.leaves,settings:state.settings,updated:Date.now()};}
 function save(){
   var ok=true;
@@ -260,10 +260,12 @@ function loadTeam(){
   return Promise.all([
     sb.from('profiles').select('id,display_name,status,is_admin,hidden,created_at').order('created_at'),
     sb.from('rosters').select('user_id,data,updated_by'),
-    sb.from('offline_members').select('id,display_name,hidden,created_at').order('created_at')
+    sb.from('offline_members').select('id,display_name,hidden,created_at').order('created_at'),
+    sb.from('claims').select('user_id,offline_id,created_at')
   ]).then(function(r){
     if(r[0].error||r[1].error)throw r[0].error||r[1].error;
     offline=r[2].error?[]:(r[2].data||[]);
+    claims=r[3]&&!r[3].error?(r[3].data||[]):[];
     members=r[0].data||[];
     var mine=members.filter(function(p){return p.id===myId;})[0];
     if(!mine||mine.status!=='approved'){showGate(mine&&mine.status==='rejected'?'rejected':'pending',mine);return;}
@@ -287,6 +289,7 @@ function loadTeam(){
     if(syncMode!=='online'&&!pending)syncMode='online';
     updateBadge();
     if(!scrim.classList.contains('open'))render();
+    setTimeout(maybeAskClaim,1200);
   });
 }
 function queueTeam(){clearTimeout(teamT);teamT=setTimeout(function(){loadTeam().catch(function(){});},500);}
@@ -309,6 +312,7 @@ function startSync(){
       .on('postgres_changes',{event:'*',schema:'public',table:'rosters'},queueTeam)
       .on('postgres_changes',{event:'*',schema:'public',table:'profiles'},queueTeam)
       .on('postgres_changes',{event:'*',schema:'public',table:'offline_members'},queueTeam)
+      .on('postgres_changes',{event:'*',schema:'public',table:'claims'},queueTeam)
       .subscribe();
   }
 }
@@ -482,6 +486,7 @@ function quickStatsHTML(now){
   h+='<div class="qs'+(warn?' warn':'')+'"><span class="qs-ico">'+SVG0+'<path fill="currentColor" d="M13.2 2.5c.4 3.1-1.3 4.8-2.8 6.4C8.9 10.5 7.5 12 7.5 14.6A4.6 4.6 0 0 0 12 19.5a4.8 4.8 0 0 0 4.8-4.9c0-1.6-.6-2.8-1.5-3.9.1 1.6-.6 2.7-1.7 3 .9-3.6-.4-7.6-.4-11.2z"/><path fill="currentColor" d="M5.4 12.2c-.9 1.3-1.4 2.7-1.4 4.2 0 4 3.6 6.6 8 6.6s8-2.6 8-6.6c0-.8-.1-1.5-.4-2.2-.4 3.8-3.6 6.3-7.6 6.3-3.8 0-6.9-2.6-6.6-8.3z" opacity=".55"/></svg></span><small>Duty streak</small><b>'+esc(stTxt)+'</b><span class="qs-sub">'+esc(stSub)+(warn?' · long stretch':'')+'</span></div>';
   return h+'</div>';
 }
+var wyOpen=false;
 function withYouHTML(now,entries){
   if(syncMode!=='online'||!entries.length)return '';
   var mine=entries.filter(function(d){return !noTimePost(d.post);});if(!mine.length)return '';
@@ -496,8 +501,8 @@ function withYouHTML(now,entries){
   var all=same.concat(other);
   var h='<div class="withyou"><div class="wy-head"><b>On with you</b><span>'+(all.length?all.length+' friend'+(all.length===1?'':'s')+' overlap your shift':'No friends overlap your shift today')+'</span></div>';
   if(all.length){
-    h+='<div class="wy-list">'+all.map(function(x){var p=pinfo(x.d.post),sc=shiftOf(x.d);
-      return '<button type="button" class="wy" data-a="cmp" data-id="'+esc(x.id)+'">'+avatar(x.id)+'<span class="wy-n">'+esc(firstName(x.id))+'</span><span class="cchip" style="--c:'+p.c+';--t:'+p.t+'">'+(sc?esc(sc.code)+' ':'')+esc(p.short)+'</span></button>';}).join('')+'</div>';
+    h+='<div class="wy-list'+(wyOpen?' open':'')+'">'+all.map(function(x,i){var p=pinfo(x.d.post),sc=shiftOf(x.d);
+      return '<button type="button" class="wy'+(i>=6?' x':'')+'" data-a="cmp" data-id="'+esc(x.id)+'">'+avatar(x.id)+'<span class="wy-n">'+esc(firstName(x.id))+'</span><span class="cchip" style="--c:'+p.c+';--t:'+p.t+'">'+(sc?esc(sc.code)+' ':'')+esc(p.short)+'</span></button>';}).join('')+'</div>'+(all.length>6?'<button type="button" class="seemore" data-a="wymore" aria-expanded="'+(wyOpen?'true':'false')+'">'+(wyOpen?'See less':'See '+(all.length-6)+' more')+'</button>':'');
     if(same.length)h+='<p class="wy-note">'+same.length+' on your post</p>';
   }
   return h+'</div>';
@@ -599,7 +604,7 @@ function avatar(id){
   var c=profCache[id],cls='av'+(id===myId?' me':''),mine=avatarOf(id);
   if(mine)return avatarSVG(mine,cls);
   if(c&&c.avatarUrl)return '<img class="'+cls+'" src="'+esc(c.avatarUrl)+'" alt="">';
-  return '<span class="'+cls+'"></span>';
+  return '<span class="'+cls+' avi" aria-hidden="true" style="background:hsl('+hueOf(String(id))+' 42% 36%)">'+esc(initialsOf(id))+'</span>';
 }
 function peopleBlock(list){
   var h='<div class="avrow">'+list.map(function(x){return x.id===myId?avatar(x.id):'<button type="button" class="avbtn" data-a="cmp" data-id="'+esc(x.id)+'" aria-label="Compare schedules with '+esc(personName(x.id))+'">'+avatar(x.id)+'</button>';}).join('')+'</div>';
@@ -623,7 +628,7 @@ function teamHTML(){
   if(ds!==today)h+='<button class="todaylink" type="button" data-a="ttoday">Back to today</button>';
   if(syncMode!=='online'){
     h+='<div class="empty"><h2>'+(syncMode==='checking'?'Loading the team…':'Team view is offline')+'</h2><p>'+
-      (syncMode==='checking'?'Getting everyone’s duties.':'The Team tab needs a connection. Check your internet, then open this tab again.')+'</p></div>';
+      (syncMode==='checking'?'Getting everyone’s duties.':'The Team tab needs a connection. Check your internet, then open this tab again.')+'</p>'+(syncMode==='checking'?'<div class="lbar" role="progressbar" aria-label="Loading"></div>':'')+'</div>';
     return h;
   }
   if(myProfile&&myProfile.hidden)h+='<p class="sync" role="note">You’re a tester. You can see the team, but they can’t see you.</p>';
@@ -685,8 +690,8 @@ function teamHTML(){
     h+=boardHTML(keys,groups,obl,lv,rdl);
   }else{
     var has={};items.forEach(function(it){has[it.k]=1;});
-    var sel=teamSel&&(teamSel==='all'||has[teamSel])?teamSel:autoShift(keys,groups,ds,today);
-    var wdSub=sel==='all'?'Showing every shift. Tap to go back to one shift.':(ds===today?'See everyone working in the lab today, all shifts in one list':'See everyone working this day, all shifts in one list');
+    var sel=(!teamSel||teamSel==='all')?'all':teamSel==='auto'?autoShift(keys,groups,ds,today):has[teamSel]?teamSel:'all';
+    var wdSub=sel==='all'?'Showing every shift. Tap to see just the current shift.':(ds===today?'See everyone working in the lab today, all shifts in one list':'See everyone working this day, all shifts in one list');
     h+='<button type="button" class="wholeday" data-a="tsel" data-v="'+(sel==='all'?'auto':'all')+'" aria-pressed="'+(sel==='all')+'">'+
       '<span class="wd-ico">'+SVG0+'<circle cx="8" cy="8" r="3.4" fill="currentColor"/><circle cx="16.5" cy="9" r="2.8" fill="currentColor"/><path fill="currentColor" d="M1.5 19.5c.5-4 3.2-6.2 6.5-6.2s6 2.2 6.5 6.2zM14.6 19.5c-.2-2-.9-3.6-2-4.8 1.2-.9 2.6-1.4 4-1.4 2.9 0 5.2 1.9 5.9 6.2z"/></svg></span>'+
       '<span class="wd-text"><b>Whole day</b><small>'+wdSub+'</small></span>'+
@@ -715,7 +720,16 @@ function autoShift(keys,groups,ds,today){
   for(var j=0;j<active.length;j++)if(mineIn(active[j]))return active[j];
   return active[active.length-1]||next||keys[keys.length-1];
 }
-function firstName(id){return id===myId?'You':personName(id).split(' ')[0];}
+var HONOR=/^(ma['’`]?am|maam|mam|madam|sir|mr\.?|ms\.?|mrs\.?)\s+/i;
+function plainName(id){var n=(id===myId&&myProfile&&myProfile.display_name)?myProfile.display_name:personName(id);return (String(n).replace(HONOR,'').trim())||n;}
+function firstName(id){return id===myId?'You':plainName(id).split(' ')[0];}
+function initialsOf(id){
+  var w=plainName(id).split(/\s+/).filter(function(x){return /[A-Za-z0-9]/.test(x);});
+  if(!w.length)return '?';
+  var a=w[0].replace(/[^A-Za-z0-9]/g,'').charAt(0),b=w.length>1?w[1].replace(/[^A-Za-z0-9]/g,'').charAt(0):'';
+  return (a+b).toUpperCase();
+}
+function hueOf(str){var h=0;for(var i=0;i<str.length;i++)h=(h*31+str.charCodeAt(i))>>>0;return h%360;}
 /* ---------- Compare schedules ---------- */
 var cmpSel=[],cmpFilter='together',CMP_DAYS=30,cmpQuery='',cmpOrder=null;
 function applyCmpSearch(reset){
@@ -965,6 +979,18 @@ function listHTML(){
 }
 
 var animNext=true;
+/* Long shift cards: show the top part and a See more button. */
+var openCards={};
+function clampCards(){
+  document.querySelectorAll('.sblock').forEach(function(sec){
+    var body=sec.querySelector('.sbody');if(!body||body.scrollHeight<=400)return;
+    var id=sec.id,open=!!openCards[id];
+    if(!open)body.classList.add('clamped');
+    var b=document.createElement('button');b.type='button';b.className='seemore';b.dataset.a='tmore';b.dataset.id=id;
+    b.setAttribute('aria-expanded',open?'true':'false');b.textContent=open?'See less':'See more';
+    sec.appendChild(b);
+  });
+}
 function render(){
   var m=document.getElementById('main');
   m.classList.remove('enter');
@@ -975,6 +1001,8 @@ function render(){
   });
   if(view==='cal'&&calMode==='list')applyListSearch();
   if(view==='team'&&syncMode==='online')refreshNames();
+  if(view==='team')clampCards();
+  document.body.classList.toggle('syncing',syncMode==='checking');
   if(view==='team'){var st=m.querySelector('.daystrip'),on=st&&st.querySelector('[aria-pressed="true"]');if(on)st.scrollLeft+=on.getBoundingClientRect().left-st.getBoundingClientRect().left-16;}
 }
 
@@ -1345,6 +1373,7 @@ function openMore(){
     '<button type="button" class="btn" data-s="myname">Your name</button>'+
     '<button type="button" class="btn" data-s="pw">Set or change password</button>'+
     '<button type="button" class="btn" data-s="avatar">Your avatar</button>'+
+    claimMenuBtn()+
     (myProfile&&myProfile.is_admin?'<button type="button" class="btn" data-s="members">Members'+(pendingCount()?'<span class="mbadge">'+pendingCount()+'</span>':'')+'</button>':'')+
     '<button type="button" class="btn" data-s="stats">Your stats</button>'+
     '<button type="button" class="btn" data-s="tour">Show the tour again</button>'+
@@ -1376,6 +1405,16 @@ sheet.addEventListener('click',function(e){
   else if(a==='about'){openSheet('<h2 class="visually-hidden">About LabMates</h2>'+welcomeHTML(true));initWelcome(sheet,true);}
   else if(a==='savename')saveMyName();
   else if(a==='members')openMembers();
+  else if(a==='mopt')openPerson(b.dataset.id);
+  else if(a==='memtab'){memTab=b.dataset.v;memLim=15;memQ='';drawMembers();}
+  else if(a==='memmore'){memLim+=15;document.getElementById('mem-list').innerHTML=memListHTML();}
+  else if(a==='claim')openClaim();
+  else if(a==='claimpick')doClaim(b,b.dataset.id);
+  else if(a==='claimno'){try{localStorage.setItem(claimKey(),'1');}catch(e){}closeSheet();toast('OK. You can change this later in More.');}
+  else if(a==='claimlater'){closeSheet();}
+  else if(a==='claimcancel')cancelClaim(b);
+  else if(a==='clmok')confirmClaim(b,b.dataset.id,b.dataset.to);
+  else if(a==='clmno')rejectClaim(b,b.dataset.id);
   else if(a==='mset')setMemberStatus(b,b.dataset.id,b.dataset.v);
   else if(a==='mhide')setMemberHidden(b,b.dataset.id,b.dataset.v==='1');
   else if(a==='medit'){closeSheet();startActing(b.dataset.id);}
@@ -1461,8 +1500,14 @@ document.getElementById('main').addEventListener('click',function(e){
   else if(a==='conext'){cutOffset++;render();}
   else if(a==='codate'){var cd=parseYmd(t.dataset.date);view='cal';calY=cd.getFullYear();calM=cd.getMonth();selDate=t.dataset.date;render();window.scrollTo(0,0);}
   else if(a==='cmp'){openCompare(t.dataset.id);}
-  else if(a==='tsel'){var ost=document.querySelector('.daystrip'),osl=ost?ost.scrollLeft:0;teamSel=t.dataset.v==='auto'?null:t.dataset.v;render();var nst=document.querySelector('.daystrip');if(nst&&ost){nst.scrollLeft=osl;nst.dispatchEvent(new Event('scroll'));}}
+  else if(a==='tsel'){var ost=document.querySelector('.daystrip'),osl=ost?ost.scrollLeft:0;teamSel=t.dataset.v;render();var nst=document.querySelector('.daystrip');if(nst&&ost){nst.scrollLeft=osl;nst.dispatchEvent(new Event('scroll'));}}
   else if(a==='tview'){teamView=t.dataset.v;render();}
+  else if(a==='wymore'){wyOpen=!wyOpen;render();}
+  else if(a==='tmore'){
+    var sec=t.closest('.sblock'),bd=sec&&sec.querySelector('.sbody');
+    if(bd){var op=bd.classList.toggle('clamped')===false;openCards[sec.id]=op;t.textContent=op?'See less':'See more';t.setAttribute('aria-expanded',op?'true':'false');
+      if(!op){var r=sec.getBoundingClientRect();if(r.top<0)sec.scrollIntoView({block:'start'});}}
+  }
   else if(a==='tjump'){var el=document.getElementById(t.dataset.k);if(el)el.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}
   else if(a==='ttoday'){teamSel=null;teamDate=ymd(new Date());render();}
 });
@@ -1519,7 +1564,7 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden&&!sc
 
 
 /* ---------- account: name, password, members ---------- */
-function pendingCount(){return members.filter(function(p){return p.status==='pending';}).length;}
+function pendingCount(){return members.filter(function(p){return p.status==='pending';}).length+openClaims().length;}
 function updateBadge(){
   var t=document.querySelector('.tab[data-view="more"]');if(!t)return;
   var dot=t.querySelector('.tdot'),n=myProfile&&myProfile.is_admin?pendingCount():0;
@@ -1560,16 +1605,18 @@ function wayLabel(w){
   var g=/google/.test(w),e=/email/.test(w);
   return g&&e?'Google + password':g?'Google':e?'Password':w;
 }
+function metaLine(p){
+  var d=new Date(p.created_at);
+  return (p.email?esc(p.email)+' · ':'')+(p.hidden&&p.status==='approved'?'<span class="mhid">Hidden</span> ':'')+(p.is_admin?'Admin · ':'')+(p.sign_in?esc(wayLabel(p.sign_in))+' · ':'')+'Joined '+shortDate(d)+' '+d.getFullYear();
+}
+/* One compact row. Waiting people get Approve/Decline right away; everyone else gets one Options button. */
 function memberRow(p){
   var who=p.id===myId?' (you)':'',btns='';
   if(p.id!==myId){
     if(p.status==='pending')btns='<button type="button" class="btn" data-s="mset" data-v="rejected" data-id="'+esc(p.id)+'">Decline</button><button type="button" class="btn primary" data-s="mset" data-v="approved" data-id="'+esc(p.id)+'">Approve</button>';
-    else if(p.status==='approved')btns='<button type="button" class="btn" data-s="medit" data-id="'+esc(p.id)+'">Edit schedule</button>'+(p.is_admin?'':'<button type="button" class="btn" data-s="mhide" data-v="'+(p.hidden?'0':'1')+'" data-id="'+esc(p.id)+'">'+(p.hidden?'Unhide':'Hide')+'</button>')+'<button type="button" class="btn danger" data-s="mset" data-v="rejected" data-id="'+esc(p.id)+'">Remove</button>';
-    else btns='<button type="button" class="btn" data-s="mset" data-v="approved" data-id="'+esc(p.id)+'">Restore</button>';
+    else btns='<button type="button" class="btn" data-s="mopt" data-id="'+esc(p.id)+'">Options</button>';
   }
-  var d=new Date(p.created_at);
-  if(p.id!==myId)btns='<button type="button" class="btn" data-s="mren" data-id="'+esc(p.id)+'">Rename</button>'+btns;
-  return '<div class="mrow"><div class="mname"><b>'+esc(p.display_name||'No name')+who+'</b>'+(p.email?'<small class="memail">'+esc(p.email)+'</small>':'')+'<small>'+(p.hidden&&p.status==='approved'?'<span class="mhid">Hidden</span> ':'')+(p.is_admin?'Admin · ':'')+(p.sign_in?esc(wayLabel(p.sign_in))+' · ':'')+'Joined '+shortDate(d)+' '+d.getFullYear()+'</small></div>'+btns+'</div>';
+  return '<div class="mrow">'+avatar(p.id)+'<div class="mname"><b>'+esc(p.display_name||'No name')+who+'</b><small>'+metaLine(p)+'</small></div>'+btns+'</div>';
 }
 var memberEmails={},memberWays={};
 function openMembers(){
@@ -1583,31 +1630,164 @@ function openMembers(){
   }
   drawMembers();
 }
+var memTab='members',memQ='',memLim=15;
+function memMatch(name,extra){var q=normName(memQ);if(!q)return true;return normName(name).indexOf(q)>-1||normName(extra||'').indexOf(q)>-1;}
+function memListHTML(){
+  var rows=[],all;
+  if(memTab==='noacct')all=offline.filter(function(o){return memMatch(o.display_name);}).map(offlineRow);
+  else if(memTab==='removed')all=members.filter(function(p){return p.status==='rejected'&&memMatch(p.display_name,p.email);}).map(memberRow);
+  else all=members.filter(function(p){return p.status==='approved'&&memMatch(p.display_name,p.email);}).map(memberRow);
+  var shown=all.slice(0,memLim);
+  var h=shown.join('');
+  if(!all.length)h='<p class="hint" style="margin:12px 0">'+(memQ?'No one matches that.':memTab==='noacct'?'People on the roster who don’t use the app. You keep their schedule.':'No one here.')+'</p>';
+  if(all.length>shown.length)h+='<button type="button" class="seemore" data-s="memmore">Show '+Math.min(15,all.length-shown.length)+' more ('+(all.length-shown.length)+' left)</button>';
+  return h;
+}
 function drawMembers(){
   members.forEach(function(p){if(memberEmails[p.id])p.email=memberEmails[p.id];if(memberWays[p.id])p.sign_in=memberWays[p.id];});
   var pend=members.filter(function(p){return p.status==='pending';}),
       appr=members.filter(function(p){return p.status==='approved';}),
       rej=members.filter(function(p){return p.status==='rejected';});
+  if(memTab==='removed'&&!rej.length)memTab='members';
   var h='<h2>Members</h2>';
-  h+='<h3 class="sec" style="margin:8px 0 4px">Waiting for approval ('+pend.length+')</h3>'+(pend.length?pend.map(memberRow).join(''):'<p class="hint">No one is waiting.</p>');
-  h+='<h3 class="sec" style="margin:20px 0 4px">Members ('+appr.length+')</h3>'+appr.map(memberRow).join('');
-  h+='<h3 class="sec" style="margin:20px 0 4px">Without an account ('+offline.length+')</h3>'+
-    (offline.length?offline.map(offlineRow).join(''):'<p class="hint">People on the roster who don’t use the app. You keep their schedule.</p>')+
-    '<div class="menu" style="margin-top:10px"><button type="button" class="btn" data-s="offadd">Add a person without an account</button>'+
-    '<button type="button" class="btn" data-s="teamimp">Import team roster</button></div>';
-  if(rej.length)h+='<h3 class="sec" style="margin:20px 0 4px">Removed or declined ('+rej.length+')</h3>'+rej.map(memberRow).join('');
-  h+='<p class="hint" style="margin-top:16px">Check the name, email and sign-in method before you approve someone. A password account can use any email, so only approve people you know. Approved members can see everyone’s duties, leave and notes. Hide is for testers: a hidden member still sees the team, but nobody else sees them in the Team tab. Edit schedule lets you fill in someone’s duties for them; they’ll see a notice. Removing someone hides the team from them right away; their account stays so you can restore it.</p>';
-  h+='<div class="menu" style="margin-top:16px"><button type="button" class="btn" data-s="close">Close</button></div>';
+  var oc=openClaims();
+  if(oc.length)h+='<h3 class="sec" style="margin:8px 0 4px">“That’s me” requests ('+oc.length+')</h3>'+oc.map(claimRow).join('');
+  if(pend.length)h+='<h3 class="sec" style="margin:'+(oc.length?'20':'8')+'px 0 4px">Waiting for approval ('+pend.length+')</h3>'+pend.map(memberRow).join('');
+  h+='<div class="seg memtabs" style="margin:16px 0 10px">'+
+    '<button type="button" data-s="memtab" data-v="members" aria-pressed="'+(memTab==='members')+'">Members '+appr.length+'</button>'+
+    '<button type="button" data-s="memtab" data-v="noacct" aria-pressed="'+(memTab==='noacct')+'">No account '+offline.length+'</button>'+
+    (rej.length?'<button type="button" data-s="memtab" data-v="removed" aria-pressed="'+(memTab==='removed')+'">Removed '+rej.length+'</button>':'')+'</div>'+
+    '<input type="text" id="mem-q" placeholder="Search by name'+(memTab==='noacct'?'':' or email')+'" autocomplete="off" enterkeyhint="search" value="'+esc(memQ)+'">'+
+    '<div id="mem-list">'+memListHTML()+'</div>'+
+    '<div class="menu" style="margin-top:14px"><button type="button" class="btn" data-s="offadd">Add a person without an account</button>'+
+    '<button type="button" class="btn" data-s="teamimp">Import team roster</button></div>'+
+    '<details class="mhelp"><summary>How this works</summary><p class="hint">Check the name, email and sign-in method before you approve someone. A password account can use any email, so only approve people you know. Approved members can see everyone’s duties, leave and notes. Hide is for testers: a hidden member still sees the team, but nobody else sees them. Edit schedule lets you fill in someone’s duties for them; they’ll see a notice. Removing someone hides the team from them right away; their account stays so you can restore it.</p></details>'+
+    '<div class="menu" style="margin-top:16px"><button type="button" class="btn" data-s="close">Close</button></div>';
   openSheet(h);
+  var q=document.getElementById('mem-q');
+  if(q)q.addEventListener('input',function(){memQ=q.value;memLim=15;document.getElementById('mem-list').innerHTML=memListHTML();});
+}
+/* Everything you can do to one person, in one place */
+function openPerson(id){
+  var p=members.filter(function(x){return x.id===id;})[0],o=offline.filter(function(x){return x.id===id;})[0],h,name,meta,i=esc(id);
+  if(p){
+    name=p.display_name||'No name';meta=metaLine(p);
+    var b='<button type="button" class="btn" data-s="mren" data-id="'+i+'">Rename</button>';
+    if(p.status==='approved'){
+      b+='<button type="button" class="btn" data-s="medit" data-id="'+i+'">Edit schedule</button>';
+      if(!p.is_admin)b+='<button type="button" class="btn" data-s="mhide" data-v="'+(p.hidden?'0':'1')+'" data-id="'+i+'">'+(p.hidden?'Unhide from the team':'Hide from the team')+'</button>';
+      b+='<button type="button" class="btn danger" data-s="mset" data-v="rejected" data-id="'+i+'">Remove</button>';
+    }else if(p.status==='rejected'){
+      b+='<button type="button" class="btn primary" data-s="mset" data-v="approved" data-id="'+i+'">Restore</button>';
+    }
+    h=b;
+  }else if(o){
+    name=o.display_name||'No name';meta=(o.hidden?'<span class="mhid">Hidden</span> ':'')+'No account';
+    h='<button type="button" class="btn" data-s="mren" data-id="'+i+'">Rename</button>'+
+      '<button type="button" class="btn" data-s="medit" data-id="'+i+'">Edit schedule</button>'+
+      '<button type="button" class="btn" data-s="mhide" data-v="'+(o.hidden?'0':'1')+'" data-id="'+i+'">'+(o.hidden?'Unhide from the team':'Hide from the team')+'</button>'+
+      '<button type="button" class="btn" data-s="olink" data-id="'+i+'">Link to an account</button>'+
+      '<button type="button" class="btn danger" data-s="odel" data-id="'+i+'">Remove</button>';
+  }else{drawMembers();return;}
+  openSheet('<div class="popen">'+avatar(id)+'<div class="mname"><b>'+esc(name)+'</b><small>'+meta+'</small></div></div><div class="menu" style="margin-top:14px">'+h+'<button type="button" class="btn" data-s="members">Back to members</button></div>');
 }
 function offlineRow(o){
   var id=esc(o.id);
-  return '<div class="mrow"><div class="mname"><b>'+esc(o.display_name||'No name')+'</b><small>'+(o.hidden?'<span class="mhid">Hidden</span> ':'')+'No account</small></div>'+
-    '<button type="button" class="btn" data-s="mren" data-id="'+id+'">Rename</button>'+
-    '<button type="button" class="btn" data-s="medit" data-id="'+id+'">Edit schedule</button>'+
-    '<button type="button" class="btn" data-s="mhide" data-v="'+(o.hidden?'0':'1')+'" data-id="'+id+'">'+(o.hidden?'Unhide':'Hide')+'</button>'+
-    '<button type="button" class="btn" data-s="olink" data-id="'+id+'">Link to account</button>'+
-    '<button type="button" class="btn danger" data-s="odel" data-id="'+id+'">Remove</button></div>';
+  return '<div class="mrow">'+avatar(o.id)+'<div class="mname"><b>'+esc(o.display_name||'No name')+'</b><small>'+(o.hidden?'<span class="mhid">Hidden</span> ':'')+'No account</small></div>'+
+    '<button type="button" class="btn" data-s="mopt" data-id="'+id+'">Options</button></div>';
+}
+
+/* ---------- "That's me": a member says which no-account person on the schedule is them ---------- */
+function claimKey(){return 'labmates:claimask:'+(myId||'');}
+function myClaim(){return claims.filter(function(c){return c.user_id===myId;})[0]||null;}
+function offName(id){var o=offline.filter(function(x){return x.id===id;})[0];return o?o.display_name:'';}
+function claimMenuBtn(){
+  var c=myClaim();
+  if(c)return '<button type="button" class="btn" data-s="claim">Your “that’s me” request'+'</button>';
+  if(offline.filter(function(o){return !o.hidden;}).length)return '<button type="button" class="btn" data-s="claim">I’m already on the schedule</button>';
+  return '';
+}
+function maybeAskClaim(){
+  if(claimAsked||!myId||!myProfile||myProfile.status!=='approved'||actingFor||tourOn)return;
+  if(scrim.classList.contains('open')||appEl.hidden)return;
+  if(myClaim())return;
+  try{if(localStorage.getItem(claimKey())==='1')return;}catch(e){return;}
+  if(!offline.filter(function(o){return !o.hidden;}).length)return;
+  claimAsked=true;openClaim(true);
+}
+function openClaim(first){
+  var c=myClaim();
+  if(c){
+    openSheet('<h2>Your request</h2><p class="hint" style="margin:-6px 0 10px">You said you are <b>'+esc(offName(c.offline_id)||'someone on the schedule')+'</b>. Your admin will confirm it. After that, their schedule is in your account.</p>'+
+      '<div class="menu"><button type="button" class="btn danger" data-s="claimcancel">Cancel my request</button><button type="button" class="btn" data-s="close">Close</button></div>');
+    return;
+  }
+  var list=offline.filter(function(o){return !o.hidden;}).slice().sort(function(a,b){return a.display_name.localeCompare(b.display_name);});
+  var h='<h2>Are you on the schedule already?</h2><p class="hint" style="margin:-6px 0 8px">Some people are on the roster before they sign up. If one of these is you, pick it. Your admin confirms, then that schedule becomes yours.</p>'+
+    '<input type="text" id="cl-q" enterkeyhint="search" placeholder="Search your name" autocomplete="off" style="margin-bottom:8px">'+
+    '<div id="cl-list" class="cl-list">'+list.map(function(o){return '<div class="mrow" data-n="'+esc(normName(o.display_name))+'"><div class="mname"><b>'+esc(o.display_name)+'</b></div><button type="button" class="btn primary" data-s="claimpick" data-id="'+esc(o.id)+'">That’s me</button></div>';}).join('')+'</div>'+
+    '<p class="hint" id="cl-none" hidden>No match. Try another spelling.</p>'+
+    '<div class="menu" style="margin-top:14px"><button type="button" class="btn" data-s="claimno">I’m not on the list</button>'+(first?'<button type="button" class="btn" data-s="claimlater">Ask me later</button>':'<button type="button" class="btn" data-s="close">Close</button>')+'</div>';
+  openSheet(h);
+  var q=document.getElementById('cl-q');
+  if(q)q.addEventListener('input',function(){
+    var v=normName(q.value),n=0;
+    document.querySelectorAll('#cl-list .mrow').forEach(function(r){var m=!v||(' '+r.dataset.n).indexOf(' '+v)>-1||r.dataset.n.indexOf(v)>-1;r.hidden=!m;if(m)n++;});
+    var e=document.getElementById('cl-none');if(e)e.hidden=!!n;
+  });
+}
+function doClaim(btn,id){
+  armed(btn,'Tap again to confirm',function(){
+    btn.disabled=true;
+    var row={user_id:myId,offline_id:id};
+    sb.from('claims').upsert(row).then(function(r){
+      if(r.error){toast("Couldn't send. Try again.");btn.disabled=false;return;}
+      claims=claims.filter(function(c){return c.user_id!==myId;}).concat([{user_id:myId,offline_id:id,created_at:new Date().toISOString()}]);
+      closeSheet();toast('Sent. Your admin will confirm.');
+    });
+  });
+}
+function cancelClaim(btn){
+  armed(btn,'Tap again to cancel',function(){
+    sb.from('claims').delete().eq('user_id',myId).then(function(r){
+      if(r.error){toast("Couldn't cancel. Try again.");return;}
+      claims=claims.filter(function(c){return c.user_id!==myId;});
+      closeSheet();toast('Request cancelled');
+    });
+  });
+}
+/* Admin side */
+function openClaims(){
+  if(!myProfile||!myProfile.is_admin)return [];
+  return claims.filter(function(c){
+    return members.some(function(p){return p.id===c.user_id&&p.status==='approved';})&&offline.some(function(o){return o.id===c.offline_id;});
+  });
+}
+function claimRow(c){
+  var p=members.filter(function(x){return x.id===c.user_id;})[0]||{};
+  return '<div class="mrow"><div class="mname"><b>'+esc(p.display_name||'Someone')+'</b><small>'+(p.email?esc(p.email)+' · ':'')+'says they are <b>'+esc(offName(c.offline_id))+'</b></small></div>'+
+    '<button type="button" class="btn" data-s="clmno" data-id="'+esc(c.user_id)+'">Reject</button>'+
+    '<button type="button" class="btn primary" data-s="clmok" data-id="'+esc(c.offline_id)+'" data-to="'+esc(c.user_id)+'">Confirm</button></div>';
+}
+function confirmClaim(btn,offId,userId){
+  armed(btn,'Tap again',function(){
+    btn.disabled=true;
+    sb.rpc('link_offline_member',{offline_id:offId,account_id:userId}).then(function(r){
+      if(r.error){toast("Couldn't link: "+(r.error.message||'try again'));btn.disabled=false;return;}
+      offline=offline.filter(function(o){return o.id!==offId;});
+      claims=claims.filter(function(c){return c.offline_id!==offId;});
+      toast('Linked. Their schedule is in their account now.');drawMembers();queueTeam();
+    });
+  });
+}
+function rejectClaim(btn,userId){
+  armed(btn,'Tap again',function(){
+    sb.from('claims').delete().eq('user_id',userId).then(function(r){
+      if(r.error){toast("Couldn't reject. Try again.");return;}
+      claims=claims.filter(function(c){return c.user_id!==userId;});
+      toast('Rejected');drawMembers();updateBadge();
+    });
+  });
 }
 function isOffline(id){return offline.some(function(o){return o.id===id;});}
 function openAddOffline(){
@@ -1817,7 +1997,7 @@ var LOCK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 function wlAv(t,c){return '<span class="wl-av" style="background:'+c+'">'+t+'</span>';}
 function welcomeSlides(){
   return [
-    {art:'<div class="wl-brand">'+brandMark(96)+'<b>Lab<span>Mates</span></b></div>',
+    {art:'<div class="wl-brand">'+brandMark(96)+'<b>Lab<span>Mates</span></b><small class="wl-by">'+BRAND_BY+'</small></div>',
      h:'Welcome to LabMates',p:'A shared duty roster for your lab. Swipe to see what it does.'},
     {art:'<div style="width:100%"><div class="wl-card"><div class="wsign">CC<small>Clinical chemistry</small></div><div class="wbody"><div class="wtime"><span class="scode sm">6A</span>6:00 AM – 2:00 PM</div><div class="wmeta">Today · on duty now</div></div></div>'+
        '<div class="wl-mini"><span>6A</span><span>2P</span><span class="r">RD</span><span class="l">VL</span><span>10P</span></div></div>',
@@ -1889,6 +2069,7 @@ function maybeTour(){
 }
 function startTour(){tourOn=true;tourI=0;tourEl.hidden=false;document.body.style.overflow='hidden';drawTour();}
 function endTour(){
+  setTimeout(maybeAskClaim,800);
   tourOn=false;tourEl.hidden=true;tourEl.innerHTML='';document.body.style.overflow='';
   try{localStorage.setItem(tourKey(),'1');}catch(e){}
 }
@@ -1955,9 +2136,9 @@ function showGate(mode,profile){
   var bt=document.getElementById('boot');if(bt)bt.remove();
   appEl.hidden=true;gate.hidden=false;
   if(scrim.classList.contains('open'))closeSheet();
-  var h='<div class="gcard"><div class="gbrand">'+brandMark(76)+'<b>Lab<span>Mates</span></b><small>Shared duty roster for the lab</small></div><div class="gpanel">';
+  var h='<div class="gcard"><div class="gbrand">'+brandMark(76)+'<b>Lab<span>Mates</span></b><small>Shared duty roster for the lab</small><small class="g-by">'+BRAND_BY+'</small></div><div class="gpanel">';
   if(mode==='welcome'){gate.innerHTML='<div class="gcard">'+welcomeHTML(false)+'</div>';initWelcome(gate,false);return;}
-  if(mode==='loading')h+='<p>Loading…</p>';
+  if(mode==='loading')h+='<p>Loading…</p><div class="lbar" role="progressbar" aria-label="Loading"></div>';
   else if(mode==='config')h+='<h1>Almost ready</h1><p>This copy of LabMates isn’t connected to a database yet. Add your Supabase URL and key to <b>config.js</b> (see the README).</p>';
   else if(mode==='signin')h+='<h1>Sign in</h1>'+
     (gateNote?'<p class="gok" role="status">'+esc(gateNote)+'</p>':'')+
@@ -2052,7 +2233,7 @@ function signOut(){
     try{localStorage.removeItem(oldKey);}catch(e){}
     KEY='labmates:none';
     if(channel){try{sb.removeChannel(channel);}catch(e){}channel=null;}
-    myId=null;myProfile=null;team={};profCache={};members=[];pending=false;
+    myId=null;myProfile=null;team={};profCache={};members=[];pending=false;claims=[];offline=[];claimAsked=false;
     state.duties=[];state.leaves=[];state.settings={h24:true,cutoff:'payday'};
     gateNote='';showGate('signin');
   };
