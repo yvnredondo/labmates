@@ -29,6 +29,7 @@ var POSTS=[
 ];
 /* Shift codes, in order of start time */
 var SHIFTS=[
+  {code:'5A',start:'05:00',end:'13:00',tone:'day'},
   {code:'6A',start:'06:00',end:'14:00',tone:'day'},
   {code:'A',start:'07:00',end:'15:00',tone:'day'},
   {code:'8AM',start:'08:00',end:'16:00',tone:'day'},
@@ -1177,7 +1178,7 @@ function val(id){var e=document.getElementById(id);return e?e.value:'';}
 
 /* Roster paste-import */
 var MON={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
-var SHIFT_RE=/(^|[\s,;|])(10P|MID|8AM|9AM|6A|2P|6P|A)(?=$|[\s,;|])/;
+var SHIFT_RE=/(^|[\s,;|])(10P|MID|8AM|9AM|6A|5A|2P|6P|A)(?=$|[\s,;|])/;
 var LEAVE_RE=/(^|[\s,;|])(BL|VL|SL|HO|RD)(?=$|[\s,;|])/;
 function to24(h,a){if(a==='pm')return (h%12)+12;if(a==='am')return h%12;return h;}
 function cleanRest(s){return s.replace(/[,;|]+/g,' ').replace(/\s+/g,' ').replace(/^[\s\-–—:@]+|[\s\-–—:@]+$/g,'').trim();}
@@ -1238,7 +1239,7 @@ function parseRoster(text){
 }
 function openImport(){
   openSheet('<h2>Paste roster</h2>'+
-    '<p class="hint" style="margin-top:0">One line per day: a date, then a shift code (6A, A, 8AM, 9AM, MID, 2P, 6P, 10P) or the times, then the post. Use BL, VL or SL for leave, RD for a rest day, and OB for official business. Codes must be in capitals.</p>'+
+    '<p class="hint" style="margin-top:0">One line per day: a date, then a shift code (5A, 6A, A, 8AM, 9AM, MID, 2P, 6P, 10P) or the times, then the post. Use BL, VL or SL for leave, RD for a rest day, and OB for official business. Codes must be in capitals.</p>'+
     '<textarea id="imp" spellcheck="false" placeholder="Oct 1 6A CC&#10;Oct 2 2P BB&#10;Oct 3 10P Bacteriology&#10;Oct 4 RD&#10;Oct 5 VL&#10;2026-10-06 7am-3pm Hema"></textarea>'+
     '<div class="preview" id="imp-prev">Nothing to add yet.</div>'+
     '<div class="btnrow"><button type="button" class="btn" data-s="close">Cancel</button>'+
