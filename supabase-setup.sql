@@ -556,7 +556,27 @@ create policy "schedule names: admin" on public.schedule_names
 revoke all on public.schedule_names from anon, authenticated;
 grant select, insert, update, delete on public.schedule_names to authenticated;
 
--- When a no-account person is linked to an account, the schedule name follows
+create table if not exists public.person_roles (
+  person_id uuid primary key,
+  role      text not null check (char_length(role) between 1 and 40)
+);
+alter table public.person_roles enable row level security;
+
+drop policy if exists "roles: read" on public.person_roles;
+create policy "roles: read" on public.person_roles
+  for select to authenticated
+  using ((select public.is_admin()) or (select public.is_approved()));
+
+drop policy if exists "roles: admin writes" on public.person_roles;
+create policy "roles: admin writes" on public.person_roles
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+revoke all on public.person_roles from anon, authenticated;
+grant select, insert, update, delete on public.person_roles to authenticated;
+
+-- When a no-account person is linked to an account, the schedule name and role follow
 create or replace function public.link_offline_member(offline_id uuid, account_id uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -590,6 +610,11 @@ begin
     select account_id, name from public.schedule_names where person_id = offline_id
     on conflict (person_id) do nothing;
   delete from public.schedule_names where person_id = offline_id;
+
+  insert into public.person_roles (person_id, role)
+    select account_id, role from public.person_roles where person_id = offline_id
+    on conflict (person_id) do nothing;
+  delete from public.person_roles where person_id = offline_id;
 
   delete from public.offline_members where id = offline_id;
 end;

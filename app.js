@@ -16,6 +16,15 @@ var POSTS=[
   {name:'Outpatient Department',short:'OPD',alt:['opd'],c:'#946200',t:'#ffffff'},
   {name:'Mass Blood Donation',short:'MBD',alt:['mbd'],c:'#7f1d1d',t:'#ffffff'},
   {name:'Official Business',short:'OB',alt:['ob'],c:'#4b5a66',t:'#ffffff',noTime:true},
+  {name:'Histopathology',short:'HP',alt:['histopath','hp'],c:'#0e7490',t:'#ffffff',special:true},
+  {name:'Drug testing',short:'DT',alt:['dt','4dt'],c:'#a21caf',t:'#ffffff',special:true},
+  {name:'Office',short:'OFC',alt:['ofc','office hours','admin'],c:'#3f6212',t:'#ffffff',special:true},
+  {name:'Ibaan clinic',short:'IBAAN',alt:['ibaan','ib'],c:'#0369a1',t:'#ffffff',special:true},
+  {name:'LIMA clinic',short:'LIMA',alt:['lima'],c:'#9a3412',t:'#ffffff',special:true},
+  {name:'Encoder',short:'ENC',alt:['enc'],c:'#475569',t:'#ffffff',special:true},
+  {name:'Calleja',short:'CAL',alt:['cal'],c:'#b45309',t:'#ffffff',special:true},
+  {name:'Chem validator',short:'CV',alt:['cv'],c:'#047857',t:'#ffffff',special:true},
+  {name:'Validator',short:'VAL',alt:['val'],c:'#be123c',t:'#ffffff',special:true},
   {name:'Unknown post',short:'UNK',c:'#5f6b76',t:'#ffffff'}
 ];
 /* Shift codes, in order of start time */
@@ -43,6 +52,7 @@ var ICONS={
   SL:SVG0+'<rect x="9.2" y="2" width="5.6" height="13" rx="2.8" fill="currentColor"/><circle cx="12" cy="17.6" r="4.6" fill="currentColor"/><circle cx="12" cy="17.6" r="1.8" '+BG.replace('stroke','fill')+'/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M17.5 5h2.5M17.5 8.5h2.5M17.5 12h2.5"/></svg>',
   RD:SVG0+'<path fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M3 10.5h7.5L3 20h7.5"/><path fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" d="M13.5 6h5.5l-5.5 6.5H19"/><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M17.5 1.8h4l-4 4.4h4"/></svg>'
 };
+ICONS.HO=SVG0+'<path fill="currentColor" d="M5 2.5h2v19H5z"/><path fill="currentColor" d="M8 4h11l-2.6 4.2L19 12.4H8z"/></svg>';
 function iconFor(k,tone){return ICONS[k]||ICONS[tone]||'';}
 /* ---------- avatars: 18 illustrated faces drawn by a friend (uncredited at the artist's request) ---------- */
 var AV_CREDIT='';
@@ -92,7 +102,8 @@ function isPayday(ds){var y=+ds.slice(0,4),m=+ds.slice(5,7)-1;return PAYDAYS.som
 var LEAVES=[
   {code:'BL',label:'Birthday leave',c:'#e8a0c4',t:'#3f0f28'},
   {code:'VL',label:'Vacation leave',c:'#8fc1f2',t:'#06233f'},
-  {code:'SL',label:'Sick leave',c:'#f3c257',t:'#3a2600'}
+  {code:'SL',label:'Sick leave',c:'#f3c257',t:'#3a2600'},
+  {code:'HO',label:'Holiday off',c:'#b9e0c4',t:'#0d3a1c'}
 ];
 function leaveInfo(code){for(var i=0;i<LEAVES.length;i++){if(LEAVES[i].code===code)return LEAVES[i];}return null;}
 function leaveFor(ds){return state.leaves.find(function(l){return l.date===ds;})||null;}
@@ -140,6 +151,15 @@ function pinfo(post){
 function cstyle(post){var p=pinfo(post);return '--c:'+p.c+';--t:'+p.t;}
 function matchPost(text){
   var x=String(text).toLowerCase();
+  if(/chem\w*\s*valid|\bcv\b/.test(x))return 'Chem validator';
+  if(/valid/.test(x))return 'Validator';
+  if(/histo|\bhp\b/.test(x))return 'Histopathology';
+  if(/drug|\bdt\b|\b4dt\b/.test(x))return 'Drug testing';
+  if(/\boffice\b|\bofc\b|\badmin\b/.test(x))return 'Office';
+  if(/ibaan/.test(x))return 'Ibaan clinic';
+  if(/\blima\b/.test(x))return 'LIMA clinic';
+  if(/encod|\benc\b/.test(x))return 'Encoder';
+  if(/calleja|\bcal\b/.test(x))return 'Calleja';
   if(/bact|microbio|\bbc\b/.test(x))return 'Bacteriology';
   if(/chem|\bcc\b/.test(x))return 'Clinical chemistry';
   if(/micro|\bcm\b/.test(x))return 'Clinical microscopy';
@@ -219,7 +239,7 @@ function load(){
 var sb=null,session=null,myProfile=null,syncMode='checking',writing=false,pending=false,readOnly=false,saveT=null,myUpdated=0;
 var myId=null,team={},profCache={},members=[],channel=null,teamT=null;
 /* When the admin edits someone else's schedule, actingFor holds their id and own holds the admin's own roster. */
-var actingFor=null,own=null,allRosters={},offline=[],claims=[],claimAsked=false;
+var actingFor=null,own=null,allRosters={},offline=[],claims=[],schedNames={},roles={},claimAsked=false;
 function payload(){return {v:2,duties:state.duties,leaves:state.leaves,settings:state.settings,updated:Date.now()};}
 function save(){
   var ok=true;
@@ -261,11 +281,15 @@ function loadTeam(){
     sb.from('profiles').select('id,display_name,status,is_admin,hidden,created_at').order('created_at'),
     sb.from('rosters').select('user_id,data,updated_by'),
     sb.from('offline_members').select('id,display_name,hidden,created_at').order('created_at'),
-    sb.from('claims').select('user_id,offline_id,created_at')
+    sb.from('claims').select('user_id,offline_id,created_at'),
+    sb.from('schedule_names').select('person_id,name'),
+    sb.from('person_roles').select('person_id,role')
   ]).then(function(r){
     if(r[0].error||r[1].error)throw r[0].error||r[1].error;
     offline=r[2].error?[]:(r[2].data||[]);
     claims=r[3]&&!r[3].error?(r[3].data||[]):[];
+    schedNames={};if(r[4]&&!r[4].error)(r[4].data||[]).forEach(function(x){schedNames[x.person_id]=x.name;});
+    roles={};if(r[5]&&!r[5].error)(r[5].data||[]).forEach(function(x){roles[x.person_id]=x.role;});
     members=r[0].data||[];
     var mine=members.filter(function(p){return p.id===myId;})[0];
     if(!mine||mine.status!=='approved'){showGate(mine&&mine.status==='rejected'?'rejected':'pending',mine);return;}
@@ -612,7 +636,7 @@ function peopleBlock(list){
 }
 function namesLine(list){
   return '<div class="names">'+list.map(function(x){
-    return x.id===myId?'<b>You</b>':esc(personName(x.id));
+    return (x.id===myId?'<b>You</b>':esc(personName(x.id)))+(roles[x.id]?' <small class="rolet">('+esc(roles[x.id])+')</small>':'');
   }).join(', ')+'</div>';
 }
 function notesLines(list){
@@ -1020,6 +1044,7 @@ scrim.addEventListener('click',function(e){if(e.target===scrim)closeSheet();});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&scrim.classList.contains('open'))closeSheet();});
 
 /* Editor */
+function postOpt(p){return '<button type="button" class="postopt" data-s="pickpost" data-v="'+esc(p.name)+'" aria-pressed="false" style="--c:'+p.c+';--t:'+p.t+'"><span class="ck">✓ </span><b>'+esc(p.short)+'</b><br><small>'+esc(p.name)+'</small></button>';}
 var ed={start:'',end:'',post:'',custom:false,ward:'',building:'',mode:'duty',leave:''};
 function isShift(st,en){return SHIFTS.some(function(s){return s.start===st&&s.end===en;});}
 function hourOpts(sel){
@@ -1084,7 +1109,7 @@ function openEditor(id,date,mode){
     '<div><label for="f-ce">End hour</label><select id="f-ce">'+hourOpts(ce)+'</select></div></div>'+
     '<p class="hint">If the end hour is earlier than the start, the duty runs into the next day.</p></div></div>'+
     '<label>Post</label><div class="postgrid" id="postgrid">'+
-    POSTS.map(function(p){return '<button type="button" class="postopt" data-s="pickpost" data-v="'+esc(p.name)+'" aria-pressed="false" style="--c:'+p.c+';--t:'+p.t+'"><span class="ck">✓ </span><b>'+esc(p.short)+'</b><br><small>'+esc(p.name)+'</small></button>';}).join('')+'</div>'+
+    POSTS.filter(function(p){return !p.special;}).map(postOpt).join('')+'<p class="hint postgrp">Special posts</p>'+POSTS.filter(function(p){return p.special;}).map(postOpt).join('')+'</div>'+
     '<div class="customrow" id="wardrow"><label>Category</label><div class="chips" id="wardcats">'+
     Object.keys(WARDCATS).map(function(k){return '<button type="button" class="chipbtn" data-s="wardcat" data-v="'+k+'" aria-pressed="false">'+esc(k)+'</button>';}).join('')+
     '</div><p class="hint" id="buildrow" style="margin-top:8px"></p></div>'+
@@ -1152,10 +1177,15 @@ function val(id){var e=document.getElementById(id);return e?e.value:'';}
 /* Roster paste-import */
 var MON={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 var SHIFT_RE=/(^|[\s,;|])(10P|MID|8AM|9AM|6A|2P|6P|A)(?=$|[\s,;|])/;
-var LEAVE_RE=/(^|[\s,;|])(BL|VL|SL|RD)(?=$|[\s,;|])/;
+var LEAVE_RE=/(^|[\s,;|])(BL|VL|SL|HO|RD)(?=$|[\s,;|])/;
 function to24(h,a){if(a==='pm')return (h%12)+12;if(a==='am')return h%12;return h;}
 function cleanRest(s){return s.replace(/[,;|]+/g,' ').replace(/\s+/g,' ').replace(/^[\s\-–—:@]+|[\s\-–—:@]+$/g,'').trim();}
 /* Returns {duty:{...}} or {leave:{...}} or {rest:true} or null */
+function mkDuty(date,start,end,rest){
+  var d={id:uid(),date:date,start:start,end:end,post:matchPost(rest),note:''};
+  if(d.post==='Warding'){var w=rest.match(/\b([59])\b/);if(w){d.ward=w[1];d.building=WARDCATS[w[1]].buildings.join(', ');}}
+  return d;
+}
 function parseLine(line,year){
   var s=line.trim();if(!s)return null;
   var m,y,mo,dd;
@@ -1181,12 +1211,12 @@ function parseLine(line,year){
   }
   if(t){
     if(st[0]>23||en[0]>23||st[1]>59||en[1]>59)return null;
-    return {duty:{id:uid(),date:date,start:pad(st[0])+':'+pad(st[1]),end:pad(en[0])+':'+pad(en[1]),post:matchPost(cleanRest(s.replace(t[0],' '))),note:''}};
+    return {duty:mkDuty(date,pad(st[0])+':'+pad(st[1]),pad(en[0])+':'+pad(en[1]),cleanRest(s.replace(t[0],' ')))};
   }
   var sc=s.match(SHIFT_RE);
   if(sc){
     var sh=shiftByCode(sc[2]);
-    return {duty:{id:uid(),date:date,start:sh.start,end:sh.end,post:matchPost(cleanRest(s.replace(sc[0],' '))),note:''}};
+    return {duty:mkDuty(date,sh.start,sh.end,cleanRest(s.replace(sc[0],' ')))};
   }
   if(matchPost(s)==='Official Business')return {duty:{id:uid(),date:date,start:'00:00',end:'00:00',post:'Official Business',note:''}};
   var lv=s.match(LEAVE_RE);
@@ -1194,16 +1224,16 @@ function parseLine(line,year){
   return null;
 }
 function parseRoster(text){
-  var year=new Date().getFullYear(),ok=[],leaves=[],rest=0,bad=[];
+  var year=new Date().getFullYear(),ok=[],leaves=[],rest=0,restDates=[],bad=[];
   text.split(/\r?\n/).forEach(function(l){
     if(!l.trim())return;
     var r=parseLine(l,year);
     if(!r)bad.push(l.trim());
     else if(r.duty)ok.push(r.duty);
     else if(r.leave)leaves.push(r.leave);
-    else rest++;
+    else{rest++;restDates.push(r.date);}
   });
-  return {ok:ok,leaves:leaves,rest:rest,bad:bad};
+  return {ok:ok,leaves:leaves,rest:rest,restDates:restDates,bad:bad};
 }
 function openImport(){
   openSheet('<h2>Paste roster</h2>'+
@@ -1419,6 +1449,10 @@ sheet.addEventListener('click',function(e){
   else if(a==='mhide')setMemberHidden(b,b.dataset.id,b.dataset.v==='1');
   else if(a==='medit'){closeSheet();startActing(b.dataset.id);}
   else if(a==='mren')openRename(b.dataset.id);
+  else if(a==='msn')openSchedName(b.dataset.id);
+  else if(a==='savesn')saveSchedName(b.dataset.id);
+  else if(a==='mrole')openRole(b.dataset.id);
+  else if(a==='saverole')saveRole(b.dataset.id);
   else if(a==='offadd')openAddOffline();
   else if(a==='offsave')saveOffline();
   else if(a==='odel')deleteOffline(b,b.dataset.id);
@@ -1634,9 +1668,9 @@ var memTab='members',memQ='',memLim=15;
 function memMatch(name,extra){var q=normName(memQ);if(!q)return true;return normName(name).indexOf(q)>-1||normName(extra||'').indexOf(q)>-1;}
 function memListHTML(){
   var rows=[],all;
-  if(memTab==='noacct')all=offline.filter(function(o){return memMatch(o.display_name);}).map(offlineRow);
-  else if(memTab==='removed')all=members.filter(function(p){return p.status==='rejected'&&memMatch(p.display_name,p.email);}).map(memberRow);
-  else all=members.filter(function(p){return p.status==='approved'&&memMatch(p.display_name,p.email);}).map(memberRow);
+  if(memTab==='noacct')all=offline.filter(function(o){return memMatch(o.display_name,schedNames[o.id]);}).map(offlineRow);
+  else if(memTab==='removed')all=members.filter(function(p){return p.status==='rejected'&&memMatch(p.display_name,(p.email||'')+' '+(schedNames[p.id]||''));}).map(memberRow);
+  else all=members.filter(function(p){return p.status==='approved'&&memMatch(p.display_name,(p.email||'')+' '+(schedNames[p.id]||''));}).map(memberRow);
   var shown=all.slice(0,memLim);
   var h=shown.join('');
   if(!all.length)h='<p class="hint" style="margin:12px 0">'+(memQ?'No one matches that.':memTab==='noacct'?'People on the roster who don’t use the app. You keep their schedule.':'No one here.')+'</p>';
@@ -1668,10 +1702,53 @@ function drawMembers(){
   if(q)q.addEventListener('input',function(){memQ=q.value;memLim=15;document.getElementById('mem-list').innerHTML=memListHTML();});
 }
 /* Everything you can do to one person, in one place */
+function snMeta(id){return (roles[id]?'<br>'+esc(roles[id]):'')+(schedNames[id]?'<br>On the schedule as '+esc(schedNames[id]):'');}
+function openSchedName(id){
+  var p=members.filter(function(x){return x.id===id;})[0]||offline.filter(function(x){return x.id===id;})[0];if(!p)return;
+  openSheet('<h2>Schedule name</h2><p class="hint" style="margin:-6px 0 4px">How '+esc(p.display_name||'this person')+' is written on the printed schedule, for example <b>DELA PENA, CHONA</b>. Import team roster uses it to find them. Only admins see this.</p>'+
+    '<label for="f-sn">Name on the schedule</label><input type="text" id="f-sn" maxlength="80" autocomplete="off" value="'+esc(schedNames[id]||'')+'">'+
+    '<p class="gerr" id="f-err"></p>'+
+    '<div class="btnrow" style="margin-top:18px"><button type="button" class="btn" data-s="mopt" data-id="'+esc(id)+'">Back</button><button type="button" class="btn primary" data-s="savesn" data-id="'+esc(id)+'">Save</button></div>');
+}
+function saveSchedName(id){
+  var v=(document.getElementById('f-sn').value||'').trim().slice(0,80),er=document.getElementById('f-err');
+  if(v){
+    var n=normName(v),clash=members.concat(offline).filter(function(x){return x.id!==id&&schedNames[x.id]&&normName(schedNames[x.id])===n;})[0];
+    if(clash){er.textContent='Already used by '+(clash.display_name||'someone else')+'.';return;}
+  }
+  var done=function(r){
+    if(r.error){er.textContent="Couldn't save. Run the schedule names SQL first, or check your connection.";return;}
+    if(v)schedNames[id]=v;else delete schedNames[id];
+    toast(v?'Schedule name saved':'Schedule name cleared');openPerson(id);
+  };
+  if(v)sb.from('schedule_names').upsert({person_id:id,name:v}).then(done);
+  else sb.from('schedule_names').delete().eq('person_id',id).then(done);
+}
+function openRole(id){
+  var p=members.filter(function(x){return x.id===id;})[0]||offline.filter(function(x){return x.id===id;})[0];if(!p)return;
+  openSheet('<h2>Role</h2><p class="hint" style="margin:-6px 0 4px">Shown next to '+esc(p.display_name||'this person')+'’s name on the Team tab, for example <b>Laboratory Manager</b> or <b>Histopathology Section Head</b>. Leave it empty for no role.</p>'+
+    '<label for="f-role">Role</label><input type="text" id="f-role" maxlength="40" autocomplete="off" value="'+esc(roles[id]||'')+'">'+
+    '<p class="gerr" id="f-err"></p>'+
+    '<div class="btnrow" style="margin-top:18px"><button type="button" class="btn" data-s="mopt" data-id="'+esc(id)+'">Back</button><button type="button" class="btn primary" data-s="saverole" data-id="'+esc(id)+'">Save</button></div>');
+}
+function saveRole(id){
+  var v=(document.getElementById('f-role').value||'').trim().slice(0,40),er=document.getElementById('f-err');
+  var done=function(r){
+    if(r.error){er.textContent="Couldn't save. Run the roles SQL first, or check your connection.";return;}
+    if(v)roles[id]=v;else delete roles[id];
+    toast(v?'Role saved':'Role cleared');queueTeam();openPerson(id);
+  };
+  if(v)sb.from('person_roles').upsert({person_id:id,role:v}).then(done);
+  else sb.from('person_roles').delete().eq('person_id',id).then(done);
+}
+function moveSchedName(from,to){
+  if(roles[from]){if(!roles[to])roles[to]=roles[from];delete roles[from];}
+  if(schedNames[from]){if(!schedNames[to])schedNames[to]=schedNames[from];delete schedNames[from];}
+}
 function openPerson(id){
   var p=members.filter(function(x){return x.id===id;})[0],o=offline.filter(function(x){return x.id===id;})[0],h,name,meta,i=esc(id);
   if(p){
-    name=p.display_name||'No name';meta=metaLine(p);
+    name=p.display_name||'No name';meta=metaLine(p)+snMeta(id);
     var b='<button type="button" class="btn" data-s="mren" data-id="'+i+'">Rename</button>';
     if(p.status==='approved'){
       b+='<button type="button" class="btn" data-s="medit" data-id="'+i+'">Edit schedule</button>';
@@ -1680,11 +1757,14 @@ function openPerson(id){
     }else if(p.status==='rejected'){
       b+='<button type="button" class="btn primary" data-s="mset" data-v="approved" data-id="'+i+'">Restore</button>';
     }
+    b+='<button type="button" class="btn" data-s="msn" data-id="'+i+'">Schedule name</button><button type="button" class="btn" data-s="mrole" data-id="'+i+'">Role</button>';
     h=b;
   }else if(o){
-    name=o.display_name||'No name';meta=(o.hidden?'<span class="mhid">Hidden</span> ':'')+'No account';
+    name=o.display_name||'No name';meta=(o.hidden?'<span class="mhid">Hidden</span> ':'')+'No account'+snMeta(id);
     h='<button type="button" class="btn" data-s="mren" data-id="'+i+'">Rename</button>'+
       '<button type="button" class="btn" data-s="medit" data-id="'+i+'">Edit schedule</button>'+
+      '<button type="button" class="btn" data-s="msn" data-id="'+i+'">Schedule name</button>'+
+      '<button type="button" class="btn" data-s="mrole" data-id="'+i+'">Role</button>'+
       '<button type="button" class="btn" data-s="mhide" data-v="'+(o.hidden?'0':'1')+'" data-id="'+i+'">'+(o.hidden?'Unhide from the team':'Hide from the team')+'</button>'+
       '<button type="button" class="btn" data-s="olink" data-id="'+i+'">Link to an account</button>'+
       '<button type="button" class="btn danger" data-s="odel" data-id="'+i+'">Remove</button>';
@@ -1774,7 +1854,7 @@ function confirmClaim(btn,offId,userId){
     btn.disabled=true;
     sb.rpc('link_offline_member',{offline_id:offId,account_id:userId}).then(function(r){
       if(r.error){toast("Couldn't link: "+(r.error.message||'try again'));btn.disabled=false;return;}
-      offline=offline.filter(function(o){return o.id!==offId;});
+      moveSchedName(offId,userId);offline=offline.filter(function(o){return o.id!==offId;});
       claims=claims.filter(function(c){return c.offline_id!==offId;});
       toast('Linked. Their schedule is in their account now.');drawMembers();queueTeam();
     });
@@ -1810,6 +1890,8 @@ function deleteOffline(btn,id){
     sb.from('offline_members').delete().eq('id',id).then(function(r){
       if(r.error){toast("Couldn't remove. Check your connection.");return;}
       offline=offline.filter(function(o){return o.id!==id;});
+      if(schedNames[id]){delete schedNames[id];sb.from('schedule_names').delete().eq('person_id',id).then(function(){},function(){});}
+      if(roles[id]){delete roles[id];sb.from('person_roles').delete().eq('person_id',id).then(function(){},function(){});}
       toast('Removed');drawMembers();queueTeam();
     });
   });
@@ -1828,7 +1910,7 @@ function doLink(btn,id,to){
     btn.disabled=true;
     sb.rpc('link_offline_member',{offline_id:id,account_id:to}).then(function(r){
       if(r.error){toast("Couldn't link: "+(r.error.message||'try again'));btn.disabled=false;return;}
-      offline=offline.filter(function(o){return o.id!==id;});
+      moveSchedName(id,to);offline=offline.filter(function(o){return o.id!==id;});
       toast('Linked. Their schedule is in their account now.');drawMembers();queueTeam();
     });
   });
@@ -1844,7 +1926,7 @@ function parseTeamRoster(text){
   var people=members.filter(function(p){return p.status==='approved';}).concat(offline);
   secs.forEach(function(sc){
     var nn=normName(sc.name);
-    var hit=people.filter(function(p){return normName(p.display_name)===nn;});
+    var hit=people.filter(function(p){return normName(p.display_name)===nn||(schedNames[p.id]&&normName(schedNames[p.id])===nn);});
     sc.match=hit.length===1?hit[0]:null;
     sc.ambiguous=hit.length>1;
     sc.r=parseRoster(sc.lines.join('\n'));
@@ -1853,26 +1935,37 @@ function parseTeamRoster(text){
 }
 function openTeamImport(){
   openSheet('<h2>Import team roster</h2>'+
-    '<p class="hint" style="margin-top:0">Paste everyone’s schedule at once. Start each person with a line like <b>## Maria Santos</b>, then their days underneath, the same way as Paste roster (e.g. <b>Oct 1 6A CC</b>, <b>Oct 4 RD</b>, <b>Oct 5 VL</b>). Names that don’t match anyone become people without an account.</p>'+
+    '<p class="hint" style="margin-top:0">Paste everyone’s schedule at once. Start each person with a line like <b>## Maria Santos</b>, then their days underneath, the same way as Paste roster (e.g. <b>Oct 1 6A CC</b>, <b>Oct 4 RD</b>, <b>Oct 5 VL</b>). A name matches a person’s name on the site or their <b>Schedule name</b> (set in their Options). Names that don’t match anyone become people without an account.</p>'+
     '<textarea id="timp" spellcheck="false" placeholder="## Maria Santos&#10;Nov 1 6A CC&#10;Nov 2 RD&#10;## Lito Cruz&#10;Nov 1 2P ER"></textarea>'+
+    '<label class="chk" style="display:flex;gap:10px;align-items:flex-start;margin:10px 0"><input type="checkbox" id="timp-rep" checked style="margin-top:4px"><span><b>Replace these days</b><br><small>If someone already has a duty, leave or rest on a day in this paste, the new line replaces it. Turn this off to only add.</small></span></label>'+
     '<div class="preview" id="timp-prev">Nothing to add yet.</div>'+
     '<div class="btnrow"><button type="button" class="btn" data-s="members">Back</button>'+
     '<button type="button" class="btn primary" data-s="doteamimp" id="timp-go" disabled>Add to roster</button></div>');
+  var timpGo=function(){document.getElementById('timp').dispatchEvent(new Event('input'));};
+  document.getElementById('timp-rep').addEventListener('change',timpGo);
   document.getElementById('timp').addEventListener('input',function(){
     var secs=parseTeamRoster(this.value),p=document.getElementById('timp-prev'),go=document.getElementById('timp-go');
     if(!secs.length){p.textContent='Start each person with ## and their name.';go.disabled=true;return;}
     var bad=0;
     p.innerHTML=secs.map(function(sc){
       var who=sc.ambiguous?'<span class="gerr">More than one person has this name. Rename one first.</span>':
-        sc.match?(sc.match.id===myId?'you':(isOffline(sc.match.id)?'no account':'member')):'new person without an account';
+        sc.match?(sc.match.id===myId?'you':(isOffline(sc.match.id)?'no account':'member'))+(normName(sc.match.display_name)!==normName(sc.name)?' · '+esc(sc.match.display_name):''):'new person without an account';
       if(sc.r.bad.length)bad+=sc.r.bad.length;
-      return '<div><b>'+esc(sc.name)+'</b> → '+who+' · '+sc.r.ok.length+' dut'+(sc.r.ok.length===1?'y':'ies')+(sc.r.leaves.length?', '+sc.r.leaves.length+' leave':'')+'</div>';
+      var rp='';
+      if(sc.match&&document.getElementById('timp-rep').checked){
+        var ex=sc.match.id===myId?{duties:state.duties,leaves:state.leaves}:(allRosters[sc.match.id]||{}),dts=importDates(sc.r),n=0;
+        (ex.duties||[]).forEach(function(x){if(x&&dts[x.date])n++;});(ex.leaves||[]).forEach(function(x){if(x&&dts[x.date])n++;});
+        if(n)rp=' · replaces '+n+' existing';
+      }
+      return '<div><b>'+esc(sc.name)+'</b> → '+who+' · '+sc.r.ok.length+' dut'+(sc.r.ok.length===1?'y':'ies')+(sc.r.leaves.length?', '+sc.r.leaves.length+' leave':'')+rp+'</div>';
     }).join('')+(bad?'<div class="gerr">'+bad+' line'+(bad===1?'':'s')+' couldn’t be read and will be skipped.</div>':'');
     go.disabled=secs.some(function(sc){return sc.ambiguous;})||!secs.some(function(sc){return sc.r.ok.length||sc.r.leaves.length;});
   });
 }
-function mergeInto(base,r){
+function importDates(r){var o={};r.ok.forEach(function(x){o[x.date]=1;});r.leaves.forEach(function(x){o[x.date]=1;});(r.restDates||[]).forEach(function(x){o[x]=1;});return o;}
+function mergeInto(base,r,replace){
   var d={duties:(Array.isArray(base.duties)?base.duties:[]).slice(),leaves:(Array.isArray(base.leaves)?base.leaves:[]).slice()},have={},added=0;
+  if(replace){var dts=importDates(r);d.duties=d.duties.filter(function(x){return !(x&&dts[x.date]);});d.leaves=d.leaves.filter(function(x){return !(x&&dts[x.date]);});}
   d.duties.forEach(function(x){if(validDuty(x))have[key(x)]=1;});
   r.ok.forEach(function(x){if(!have[key(x)]){have[key(x)]=1;d.duties.push(x);added++;}});
   r.leaves.forEach(function(l){d.leaves=d.leaves.filter(function(x){return x.date!==l.date;});d.leaves.push(l);});
@@ -1881,6 +1974,7 @@ function mergeInto(base,r){
 function doTeamImport(btn){
   var secs=parseTeamRoster(document.getElementById('timp').value).filter(function(sc){return sc.r.ok.length||sc.r.leaves.length;});
   if(!secs.length||actingFor)return;
+  var repl=!!(document.getElementById('timp-rep')&&document.getElementById('timp-rep').checked);
   btn.disabled=true;btn.textContent='Saving…';
   var done=0,people=0,failed=[];
   var next=function(){
@@ -1891,10 +1985,10 @@ function doTeamImport(btn){
     var sc=secs.shift();
     var withId=function(id){
       if(id===myId){
-        var m=mergeInto({duties:state.duties,leaves:state.leaves,settings:state.settings},sc.r);
+        var m=mergeInto({duties:state.duties,leaves:state.leaves,settings:state.settings},sc.r,repl);
         state.duties=m.data.duties;state.leaves=m.data.leaves;save();done+=m.added;people++;next();return;
       }
-      var m2=mergeInto(allRosters[id]||{},sc.r);
+      var m2=mergeInto(allRosters[id]||{},sc.r,repl);
       sb.from('rosters').upsert({user_id:id,data:m2.data}).then(function(r){
         if(r.error)failed.push(sc.name);else{allRosters[id]=m2.data;done+=m2.added;people++;}
         next();
@@ -2233,7 +2327,7 @@ function signOut(){
     try{localStorage.removeItem(oldKey);}catch(e){}
     KEY='labmates:none';
     if(channel){try{sb.removeChannel(channel);}catch(e){}channel=null;}
-    myId=null;myProfile=null;team={};profCache={};members=[];pending=false;claims=[];offline=[];claimAsked=false;
+    myId=null;myProfile=null;team={};profCache={};members=[];pending=false;claims=[];offline=[];schedNames={};roles={};claimAsked=false;
     state.duties=[];state.leaves=[];state.settings={h24:true,cutoff:'payday'};
     gateNote='';showGate('signin');
   };
