@@ -484,6 +484,120 @@ end;
 $$;
 
 -- ─────────────────────────────────────────────
+-- 6b. Members can say "I'm that person on the schedule" (the admin confirms)
+-- ─────────────────────────────────────────────
+-- (the admin's Confirm uses the existing "Link to account" step).
+
+create table if not exists public.claims (
+  user_id    uuid primary key references public.profiles(id) on delete cascade,
+  offline_id uuid not null references public.offline_members(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+alter table public.claims enable row level security;
+
+drop policy if exists "claims: read" on public.claims;
+create policy "claims: read" on public.claims
+  for select to authenticated
+  using (user_id = (select auth.uid()) or (select public.is_admin()));
+
+drop policy if exists "claims: insert own" on public.claims;
+create policy "claims: insert own" on public.claims
+  for insert to authenticated
+  with check (
+    user_id = (select auth.uid()) and (select public.is_approved())
+    and exists (select 1 from public.offline_members o where o.id = offline_id and not o.hidden)
+  );
+
+drop policy if exists "claims: update own" on public.claims;
+create policy "claims: update own" on public.claims
+  for update to authenticated
+  using (user_id = (select auth.uid()))
+  with check (
+    user_id = (select auth.uid()) and (select public.is_approved())
+    and exists (select 1 from public.offline_members o where o.id = offline_id and not o.hidden)
+  );
+
+drop policy if exists "claims: delete" on public.claims;
+create policy "claims: delete" on public.claims
+  for delete to authenticated
+  using (user_id = (select auth.uid()) or (select public.is_admin()));
+
+revoke all on public.claims from anon, authenticated;
+grant select, insert, delete on public.claims to authenticated;
+grant update (offline_id) on public.claims to authenticated;
+
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.claims;
+  exception when duplicate_object then null;
+  end;
+end;
+$$;
+
+-- ─────────────────────────────────────────────
+-- 6d. Schedule names: the name a person has on the printed schedule
+-- ─────────────────────────────────────────────
+-- Used by Import team roster, so "DELA PENA, CHONA" goes to "Ma'am Chona"
+-- (account or no account). Only the admin can see and change these.
+
+create table if not exists public.schedule_names (
+  person_id uuid primary key,
+  name      text not null check (char_length(name) between 1 and 80)
+);
+alter table public.schedule_names enable row level security;
+
+drop policy if exists "schedule names: admin" on public.schedule_names;
+create policy "schedule names: admin" on public.schedule_names
+  for all to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+revoke all on public.schedule_names from anon, authenticated;
+grant select, insert, update, delete on public.schedule_names to authenticated;
+
+-- When a no-account person is linked to an account, the schedule name follows
+create or replace function public.link_offline_member(offline_id uuid, account_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  src jsonb; dst jsonb; d jsonb; taken text[];
+  new_duties jsonb; new_leaves jsonb;
+begin
+  if not public.is_admin() then raise exception 'Only the admin can do this'; end if;
+  if not exists (select 1 from public.offline_members where id = offline_id) then raise exception 'That person was not found'; end if;
+  if not exists (select 1 from public.profiles where id = account_id) then raise exception 'That account was not found'; end if;
+
+  select data into src from public.rosters where user_id = offline_id;
+  select data into dst from public.rosters where user_id = account_id;
+  src := coalesce(src, '{}'::jsonb);
+  dst := coalesce(dst, '{}'::jsonb);
+
+  select coalesce(array_agg(distinct x->>'date'), '{}') into taken
+  from (select jsonb_array_elements(coalesce(dst->'duties','[]')) x
+        union all select jsonb_array_elements(coalesce(dst->'leaves','[]'))) t;
+
+  select coalesce(dst->'duties','[]'::jsonb) || coalesce(jsonb_agg(x) filter (where not ((x->>'date') = any(taken))), '[]'::jsonb)
+    into new_duties from jsonb_array_elements(coalesce(src->'duties','[]')) x;
+  select coalesce(dst->'leaves','[]'::jsonb) || coalesce(jsonb_agg(x) filter (where not ((x->>'date') = any(taken))), '[]'::jsonb)
+    into new_leaves from jsonb_array_elements(coalesce(src->'leaves','[]')) x;
+
+  d := dst || jsonb_build_object('v', 2, 'duties', new_duties, 'leaves', new_leaves,
+        'updated', (extract(epoch from clock_timestamp()) * 1000)::bigint);
+  insert into public.rosters (user_id, data) values (account_id, d)
+    on conflict (user_id) do update set data = excluded.data;
+
+  insert into public.schedule_names (person_id, name)
+    select account_id, name from public.schedule_names where person_id = offline_id
+    on conflict (person_id) do nothing;
+  delete from public.schedule_names where person_id = offline_id;
+
+  delete from public.offline_members where id = offline_id;
+end;
+$$;
+revoke all on function public.link_offline_member(uuid, uuid) from public, anon;
+grant execute on function public.link_offline_member(uuid, uuid) to authenticated;
+
+-- ─────────────────────────────────────────────
 -- 7. Make yourself the admin (one time)
 --    Sign in to the app first, then put your email below,
 --    remove the two dashes at the start of the line, and run just that line.
