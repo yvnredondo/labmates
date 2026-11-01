@@ -657,7 +657,8 @@ function teamHTML(){
   }
   if(myProfile&&myProfile.hidden)h+='<p class="sync" role="note">You’re a tester. You can see the team, but they can’t see you.</p>';
   var ppl=teamPeople(),ids=Object.keys(ppl);
-  var groups={},ob=[],lv={BL:[],VL:[],SL:[]},rd=[];
+  var groups={},ob=[],lv={},rd=[];
+  LEAVES.forEach(function(x){lv[x.code]=[];});
   ids.forEach(function(id){
     var p=ppl[id]||{};
     var mine=(Array.isArray(p.duties)?p.duties:[]).filter(function(d){return validDuty(d)&&d.date===ds;});
