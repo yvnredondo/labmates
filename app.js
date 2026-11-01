@@ -1743,6 +1743,7 @@ function saveRole(id){
   else sb.from('person_roles').delete().eq('person_id',id).then(done);
 }
 function moveSchedName(from,to){
+  if(!schedNames[from]){var on=offName(from);if(on)schedNames[from]=on;}
   if(roles[from]){if(!roles[to])roles[to]=roles[from];delete roles[from];}
   if(schedNames[from]){if(!schedNames[to])schedNames[to]=schedNames[from];delete schedNames[from];}
 }
@@ -1917,6 +1918,7 @@ function doLink(btn,id,to){
   });
 }
 function normName(n){return String(n||'').toLowerCase().replace(/[^a-z0-9ñ ]+/g,' ').replace(/\s+/g,' ').trim();}
+function nameTokens(n){return normName(String(n||'').replace(HONOR,' ')).split(' ').filter(function(t){return t.length>1;});}
 function parseTeamRoster(text){
   var secs=[],cur=null;
   String(text||'').split(/\r?\n/).forEach(function(l){
@@ -1930,6 +1932,16 @@ function parseTeamRoster(text){
     var hit=people.filter(function(p){return normName(p.display_name)===nn||(schedNames[p.id]&&normName(schedNames[p.id])===nn);});
     sc.match=hit.length===1?hit[0]:null;
     sc.ambiguous=hit.length>1;
+    sc.suggest=null;
+    if(!hit.length){
+      var st=nameTokens(sc.name);
+      var cand=members.filter(function(p){
+        if(p.status!=='approved')return false;
+        var pt=nameTokens(p.display_name);
+        return pt.length&&pt.every(function(t){return st.indexOf(t)>-1;});
+      });
+      if(cand.length===1)sc.suggest=cand[0];
+    }
     sc.r=parseRoster(sc.lines.join('\n'));
   });
   return secs;
@@ -1949,12 +1961,13 @@ function openTeamImport(){
     if(!secs.length){p.textContent='Start each person with ## and their name.';go.disabled=true;return;}
     var bad=0;
     p.innerHTML=secs.map(function(sc){
-      var who=sc.ambiguous?'<span class="gerr">More than one person has this name. Rename one first.</span>':
+      var who=sc.suggest?'member · looks like <b>'+esc(sc.suggest.display_name)+'</b>, saved as their schedule name':sc.ambiguous?'<span class="gerr">More than one person has this name. Rename one first.</span>':
         sc.match?(sc.match.id===myId?'you':(isOffline(sc.match.id)?'no account':'member'))+(normName(sc.match.display_name)!==normName(sc.name)?' · '+esc(sc.match.display_name):''):'new person without an account';
       if(sc.r.bad.length)bad+=sc.r.bad.length;
       var rp='';
-      if(sc.match&&document.getElementById('timp-rep').checked){
-        var ex=sc.match.id===myId?{duties:state.duties,leaves:state.leaves}:(allRosters[sc.match.id]||{}),dts=importDates(sc.r),n=0;
+      var mt=sc.match||sc.suggest;
+      if(mt&&document.getElementById('timp-rep').checked){
+        var ex=mt.id===myId?{duties:state.duties,leaves:state.leaves}:(allRosters[mt.id]||{}),dts=importDates(sc.r),n=0;
         (ex.duties||[]).forEach(function(x){if(x&&dts[x.date])n++;});(ex.leaves||[]).forEach(function(x){if(x&&dts[x.date])n++;});
         if(n)rp=' · replaces '+n+' existing';
       }
@@ -1995,6 +2008,11 @@ function doTeamImport(btn){
         next();
       },function(){failed.push(sc.name);next();});
     };
+    if(sc.suggest){
+      var sid=sc.suggest.id;
+      sb.from('schedule_names').upsert({person_id:sid,name:sc.name.slice(0,80)}).then(function(r){if(!r.error)schedNames[sid]=sc.name.slice(0,80);},function(){});
+      withId(sid);return;
+    }
     if(sc.match){withId(sc.match.id);return;}
     sb.from('offline_members').insert({display_name:sc.name}).select('id,display_name,hidden,created_at').then(function(r){
       if(r.error||!r.data||!r.data[0]){failed.push(sc.name);next();return;}

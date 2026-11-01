@@ -610,6 +610,10 @@ begin
     select account_id, name from public.schedule_names where person_id = offline_id
     on conflict (person_id) do nothing;
   delete from public.schedule_names where person_id = offline_id;
+  -- if the no-account person had no schedule name, their name is the one on the schedule
+  insert into public.schedule_names (person_id, name)
+    select account_id, left(display_name, 80) from public.offline_members where id = offline_id
+    on conflict (person_id) do nothing;
 
   insert into public.person_roles (person_id, role)
     select account_id, role from public.person_roles where person_id = offline_id
